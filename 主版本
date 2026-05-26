@@ -25,11 +25,13 @@ export default {
         const { results: columns } = await env.DB.prepare(`PRAGMA table_info(servers)`).all();
         const existingCols = columns.map(c => c.name);
         
+        // 新增了 is_hidden 字段用于控制前台隐藏
         const newCols = {
           ping_ct: "TEXT DEFAULT '0'", ping_cu: "TEXT DEFAULT '0'", ping_cm: "TEXT DEFAULT '0'", ping_bd: "TEXT DEFAULT '0'",
           monthly_rx: "TEXT DEFAULT '0'", monthly_tx: "TEXT DEFAULT '0'", last_rx: "TEXT DEFAULT '0'", last_tx: "TEXT DEFAULT '0'", reset_month: "TEXT DEFAULT ''",
           agent_os: "TEXT DEFAULT 'debian'",
-          history: "TEXT DEFAULT '{}'"
+          history: "TEXT DEFAULT '{}'",
+          is_hidden: "TEXT DEFAULT 'false'"
         };
 
         for (const [colName, colDef] of Object.entries(newCols)) {
@@ -262,9 +264,9 @@ export default {
           const name = data.name || 'New Server';
           await env.DB.prepare(`
             INSERT INTO servers 
-            (id, name, cpu, ram, disk, load_avg, uptime, last_updated, ram_total, net_rx, net_tx, net_in_speed, net_out_speed, os, cpu_info, arch, boot_time, ram_used, swap_total, swap_used, disk_total, disk_used, processes, tcp_conn, udp_conn, country, ip_v4, ip_v6, server_group, price, expire_date, bandwidth, traffic_limit, ping_ct, ping_cu, ping_cm, ping_bd, monthly_rx, monthly_tx, last_rx, last_tx, reset_month, agent_os, history) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).bind(id, name, '0', '0', '0', '0', '0', 0, '0', '0', '0', '0', '0', '', '', '', '', '0', '0', '0', '0', '0', '0', '0', '0', '', '0', '0', '默认分组', '免费', '', '', '', '0', '0', '0', '0', '0', '0', '0', '0', '', data.agent_os || 'debian', '{}').run();
+            (id, name, cpu, ram, disk, load_avg, uptime, last_updated, ram_total, net_rx, net_tx, net_in_speed, net_out_speed, os, cpu_info, arch, boot_time, ram_used, swap_total, swap_used, disk_total, disk_used, processes, tcp_conn, udp_conn, country, ip_v4, ip_v6, server_group, price, expire_date, bandwidth, traffic_limit, ping_ct, ping_cu, ping_cm, ping_bd, monthly_rx, monthly_tx, last_rx, last_tx, reset_month, agent_os, history, is_hidden) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(id, name, '0', '0', '0', '0', '0', 0, '0', '0', '0', '0', '0', '', '', '', '', '0', '0', '0', '0', '0', '0', '0', '0', '', '0', '0', '默认分组', '免费', '', '', '', '0', '0', '0', '0', '0', '0', '0', '0', '', data.agent_os || 'debian', '{}', 'false').run();
           return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
         } 
         else if (data.action === 'delete') {
@@ -273,8 +275,8 @@ export default {
         } 
         else if (data.action === 'edit') {
           await env.DB.prepare(`
-            UPDATE servers SET name = ?, server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ?, agent_os = ? WHERE id = ?
-          `).bind(data.name || 'Unnamed', data.server_group || '默认分组', data.price || '', data.expire_date || '', data.bandwidth || '', data.traffic_limit || '', data.agent_os || 'debian', data.id).run();
+            UPDATE servers SET name = ?, server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ?, agent_os = ?, is_hidden = ? WHERE id = ?
+          `).bind(data.name || 'Unnamed', data.server_group || '默认分组', data.price || '', data.expire_date || '', data.bandwidth || '', data.traffic_limit || '', data.agent_os || 'debian', data.is_hidden || 'false', data.id).run();
           return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
         }
       } catch (e) {
@@ -288,7 +290,7 @@ export default {
     if (request.method === 'GET' && url.pathname === '/admin') {
       if (!checkAuth(request)) return authResponse(sys.admin_title);
       
-      const { results } = await env.DB.prepare('SELECT id, name, last_updated, server_group, price, expire_date, bandwidth, traffic_limit, agent_os FROM servers').all();
+      const { results } = await env.DB.prepare('SELECT id, name, last_updated, server_group, price, expire_date, bandwidth, traffic_limit, agent_os, is_hidden FROM servers').all();
       const now = Date.now();
       
       let trs = '';
@@ -296,6 +298,7 @@ export default {
         for (const s of results) {
           const isOnline = (now - s.last_updated) < 30000;
           const status = isOnline ? '<span style="color:green; font-weight:bold;">在线</span>' : '<span style="color:red; font-weight:bold;">离线</span>';
+          const hiddenBadge = s.is_hidden === 'true' ? '<span style="background:#64748b; color:white; padding:2px 6px; border-radius:4px; font-size:12px; margin-left:5px;">已隐藏</span>' : '';
           
           const osType = s.agent_os === 'alpine' ? 'alpine' : 'debian';
           const shellType = osType === 'alpine' ? 'sh' : 'bash';
@@ -304,14 +307,14 @@ export default {
           
           trs += `
             <tr>
-              <td>${s.name}</td>
+              <td>${s.name} ${hiddenBadge}</td>
               <td>${s.server_group || '默认分组'}</td>
               <td><span style="background:#e2e8f0; color:#475569; padding:2px 6px; border-radius:4px; font-size:12px;">${osType}</span></td>
               <td>${status}</td>
               <td>
                 <input type="text" readonly value="${cmd}" style="width:260px; padding:6px; margin-right:5px; border:1px solid #ccc; border-radius:4px;" id="cmd-${s.id}">
                 <button onclick="copyCmd('${s.id}')" class="btn btn-green">复制命令</button>
-                <button onclick="openEditModal('${s.id}', '${s.name}', '${s.server_group||''}', '${s.price||''}', '${s.expire_date||''}', '${s.bandwidth||''}', '${s.traffic_limit||''}', '${osType}')" class="btn btn-blue">✏️ 编辑</button>
+                <button onclick="openEditModal('${s.id}', '${s.name}', '${s.server_group||''}', '${s.price||''}', '${s.expire_date||''}', '${s.bandwidth||''}', '${s.traffic_limit||''}', '${osType}', '${s.is_hidden||'false'}')" class="btn btn-blue">✏️ 编辑</button>
                 <button onclick="deleteServer('${s.id}')" class="btn btn-red">🗑️ 删除</button>
               </td>
             </tr>
@@ -471,6 +474,11 @@ export default {
             <h3 style="margin-top:0;">✏️ 编辑服务器信息</h3>
             <input type="hidden" id="editId">
             <label>节点名称</label> <input type="text" id="editName" placeholder="如：香港 CN2">
+            <label>前台可见性</label> 
+            <select id="editHidden" style="background: white;">
+              <option value="false">显示 (默认)</option>
+              <option value="true">隐藏 (不在前台大盘展示)</option>
+            </select>
             <label>服务器系统环境</label> 
             <select id="editOs" style="background: white;">
               <option value="debian">Linux (Debian/Ubuntu/CentOS/Systemd)</option>
@@ -553,9 +561,10 @@ export default {
             input.select(); document.execCommand('copy');
             alert('✅ 安装命令已复制！去对应操作系统的 VPS 上执行即可。');
           }
-          function openEditModal(id, name, group, price, expire, bw, traffic, osType) {
+          function openEditModal(id, name, group, price, expire, bw, traffic, osType, isHidden) {
             document.getElementById('editId').value = id;
             document.getElementById('editName').value = name || '';
+            document.getElementById('editHidden').value = isHidden === 'true' ? 'true' : 'false';
             document.getElementById('editOs').value = osType || 'debian';
             document.getElementById('editGroup').value = group || '默认分组';
             document.getElementById('editPrice').value = price || '免费';
@@ -573,7 +582,8 @@ export default {
               agent_os: document.getElementById('editOs').value,
               server_group: document.getElementById('editGroup').value, price: document.getElementById('editPrice').value,
               expire_date: document.getElementById('editExpire').value, bandwidth: document.getElementById('editBandwidth').value,
-              traffic_limit: document.getElementById('editTraffic').value
+              traffic_limit: document.getElementById('editTraffic').value,
+              is_hidden: document.getElementById('editHidden').value
             };
             const res = await fetch('/admin/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
             if (res.ok) location.reload(); else alert('保存失败');
@@ -811,33 +821,42 @@ echo "✅ Linux 探针安装成功！"
         // 提取并更新历史数据
         let history = {};
         try { history = JSON.parse(serverExists.history || '{}'); } catch(e) {}
-        const maxPoints = 30; // 保存最近30个时间点
-        const updateArr = (arr, val) => {
-            if (!Array.isArray(arr)) arr = Array(maxPoints).fill(0);
-            arr.push(val);
-            if (arr.length > maxPoints) arr.shift();
-            return arr;
-        };
-        const updateLabels = (arr) => {
-            if (!Array.isArray(arr)) arr = Array(maxPoints).fill('');
-            const timeLabel = localNow.getHours().toString().padStart(2, '0') + ':' + localNow.getMinutes().toString().padStart(2, '0') + ':' + localNow.getSeconds().toString().padStart(2, '0');
-            arr.push(timeLabel);
-            if (arr.length > maxPoints) arr.shift();
-            return arr;
-        };
+        
+        const nowMs = Date.now();
+        const lastHistTime = history.last_time || 0;
+        
+        // 5分钟记录一次历史数据 (288点 = 24小时)
+        if (nowMs - lastHistTime >= 300000 || !history.time) {
+            const maxPoints = 288; 
+            const updateArr = (arr, val) => {
+                if (!Array.isArray(arr)) arr = [];
+                arr.push(val);
+                if (arr.length > maxPoints) arr.shift();
+                return arr;
+            };
+            const updateLabels = (arr) => {
+                if (!Array.isArray(arr)) arr = [];
+                const d = new Date(nowMs + 8 * 60 * 60000); 
+                const timeLabel = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+                arr.push(timeLabel);
+                if (arr.length > maxPoints) arr.shift();
+                return arr;
+            };
 
-        history.cpu = updateArr(history.cpu, parseFloat(metrics.cpu) || 0);
-        history.ram = updateArr(history.ram, parseFloat(metrics.ram) || 0);
-        history.proc = updateArr(history.proc, parseInt(metrics.processes) || 0);
-        history.net_in = updateArr(history.net_in, parseFloat(metrics.net_in_speed) || 0);
-        history.net_out = updateArr(history.net_out, parseFloat(metrics.net_out_speed) || 0);
-        history.tcp = updateArr(history.tcp, parseInt(metrics.tcp_conn) || 0);
-        history.udp = updateArr(history.udp, parseInt(metrics.udp_conn) || 0);
-        history.ping_ct = updateArr(history.ping_ct, parseInt(metrics.ping_ct) || 0);
-        history.ping_cu = updateArr(history.ping_cu, parseInt(metrics.ping_cu) || 0);
-        history.ping_cm = updateArr(history.ping_cm, parseInt(metrics.ping_cm) || 0);
-        history.ping_bd = updateArr(history.ping_bd, parseInt(metrics.ping_bd) || 0);
-        history.time = updateLabels(history.time);
+            history.cpu = updateArr(history.cpu, parseFloat(metrics.cpu) || 0);
+            history.ram = updateArr(history.ram, parseFloat(metrics.ram) || 0);
+            history.proc = updateArr(history.proc, parseInt(metrics.processes) || 0);
+            history.net_in = updateArr(history.net_in, parseFloat(metrics.net_in_speed) || 0);
+            history.net_out = updateArr(history.net_out, parseFloat(metrics.net_out_speed) || 0);
+            history.tcp = updateArr(history.tcp, parseInt(metrics.tcp_conn) || 0);
+            history.udp = updateArr(history.udp, parseInt(metrics.udp_conn) || 0);
+            history.ping_ct = updateArr(history.ping_ct, parseInt(metrics.ping_ct) || 0);
+            history.ping_cu = updateArr(history.ping_cu, parseInt(metrics.ping_cu) || 0);
+            history.ping_cm = updateArr(history.ping_cm, parseInt(metrics.ping_cm) || 0);
+            history.ping_bd = updateArr(history.ping_bd, parseInt(metrics.ping_bd) || 0);
+            history.time = updateLabels(history.time);
+            history.last_time = nowMs;
+        }
 
         const historyStr = JSON.stringify(history);
 
@@ -880,7 +899,7 @@ echo "✅ Linux 探针安装成功！"
       const id = url.searchParams.get('id');
       if (!id) return new Response('Miss ID', { status: 400 });
       const server = await env.DB.prepare('SELECT * FROM servers WHERE id = ?').bind(id).first();
-      if (!server) return new Response('Not Found', { status: 404 });
+      if (!server || server.is_hidden === 'true') return new Response('Not Found', { status: 404 });
       return new Response(JSON.stringify(server), { headers: { 'Content-Type': 'application/json' } });
     }
 
@@ -896,7 +915,7 @@ echo "✅ Linux 探针安装成功！"
 
       if (viewId) {
         const server = await env.DB.prepare('SELECT * FROM servers WHERE id = ?').bind(viewId).first();
-        if (!server) return new Response('Server not found', { status: 404 });
+        if (!server || server.is_hidden === 'true') return new Response('Server not found', { status: 404 });
         
         const rxField = sys.auto_reset_traffic === 'true' ? 'monthly_rx' : 'net_rx';
         const txField = sys.auto_reset_traffic === 'true' ? 'monthly_tx' : 'net_tx';
@@ -956,7 +975,7 @@ echo "✅ Linux 探针安装成功！"
               <div class="chart-card"><h3>TCP / UDP <span class="chart-val" style="font-size:14px;">TCP <span id="text-tcp">0</span> | UDP <span id="text-udp">0</span></span></h3><canvas id="chartConn"></canvas></div>
               
               <div class="chart-card chart-full">
-                <h3>国内延迟追踪 <span class="chart-val" style="font-size:12px; font-weight:normal;">电信 <b id="t-ct">0</b> | 联通 <b id="t-cu">0</b> | 移动 <b id="t-cm">0</b> | 字节 <b id="t-bd">0</b></span></h3>
+                <h3>国内延迟追踪 (24小时) <span class="chart-val" style="font-size:12px; font-weight:normal;">电信 <b id="t-ct">0</b> | 联通 <b id="t-cu">0</b> | 移动 <b id="t-cm">0</b> | 字节 <b id="t-bd">0</b></span></h3>
                 <canvas id="chartPing"></canvas>
               </div>
             </div>
@@ -965,11 +984,44 @@ echo "✅ Linux 探针安装成功！"
           <script>
             const serverId = "${viewId}";
             const formatBytes = (bytes) => { const b = parseInt(bytes); if (isNaN(b) || b === 0) return '0 B'; const k = 1024; const sizes = ['B', 'KB', 'MB', 'GB', 'TB']; const i = Math.floor(Math.log(b) / Math.log(k)); return parseFloat((b / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]; };
-            const commonOptions = { responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, scales: { x: { display: false }, y: { beginAtZero: true, border: { display: false } } }, plugins: { legend: { display: false }, tooltip: { enabled: false } }, elements: { point: { radius: 0 }, line: { tension: 0.4, borderWidth: 2 } } };
-            const createChart = (ctxId, color, bgColor) => { const ctx = document.getElementById(ctxId).getContext('2d'); return new Chart(ctx, { type: 'line', data: { labels: Array(30).fill(''), datasets: [{ data: Array(30).fill(0), borderColor: color, backgroundColor: bgColor, fill: true }] }, options: commonOptions }); };
-            const charts = { cpu: createChart('chartCPU', '#3b82f6', 'rgba(59, 130, 246, 0.1)'), ram: createChart('chartRAM', '#8b5cf6', 'rgba(139, 92, 246, 0.1)'), proc: createChart('chartProc', '#ec4899', 'rgba(236, 72, 153, 0.1)') };
-            const ctxNet = document.getElementById('chartNet').getContext('2d'); charts.net = new Chart(ctxNet, { type: 'line', data: { labels: Array(30).fill(''), datasets: [ { label: 'In', data: Array(30).fill(0), borderColor: '#10b981', borderWidth: 2, tension: 0.4, pointRadius: 0 }, { label: 'Out', data: Array(30).fill(0), borderColor: '#3b82f6', borderWidth: 2, tension: 0.4, pointRadius: 0 } ]}, options: commonOptions });
-            const ctxConn = document.getElementById('chartConn').getContext('2d'); charts.conn = new Chart(ctxConn, { type: 'line', data: { labels: Array(30).fill(''), datasets: [ { label: 'TCP', data: Array(30).fill(0), borderColor: '#6366f1', borderWidth: 2, tension: 0.4, pointRadius: 0 }, { label: 'UDP', data: Array(30).fill(0), borderColor: '#d946ef', borderWidth: 2, tension: 0.4, pointRadius: 0 } ]}, options: commonOptions });
+            
+            const commonOptions = { 
+              responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, 
+              scales: { x: { display: false }, y: { beginAtZero: true, border: { display: false } } }, 
+              plugins: { legend: { display: false }, tooltip: { enabled: false } }, 
+              elements: { point: { radius: 0 }, line: { tension: 0.4, borderWidth: 2 } } 
+            };
+            
+            const createChart = (ctxId, color, bgColor) => { 
+                const ctx = document.getElementById(ctxId).getContext('2d'); 
+                return new Chart(ctx, { 
+                    type: 'line', 
+                    data: { labels: [], datasets: [{ data: [], borderColor: color, backgroundColor: bgColor, fill: true }] }, 
+                    options: commonOptions 
+                }); 
+            };
+            
+            const charts = { 
+                cpu: createChart('chartCPU', '#3b82f6', 'rgba(59, 130, 246, 0.1)'), 
+                ram: createChart('chartRAM', '#8b5cf6', 'rgba(139, 92, 246, 0.1)'), 
+                proc: createChart('chartProc', '#ec4899', 'rgba(236, 72, 153, 0.1)') 
+            };
+            
+            charts.net = new Chart(document.getElementById('chartNet').getContext('2d'), { 
+                type: 'line', 
+                data: { labels: [], datasets: [ 
+                    { label: 'In', data: [], borderColor: '#10b981', borderWidth: 2, tension: 0.4, pointRadius: 0 }, 
+                    { label: 'Out', data: [], borderColor: '#3b82f6', borderWidth: 2, tension: 0.4, pointRadius: 0 } 
+                ]}, options: commonOptions 
+            });
+            
+            charts.conn = new Chart(document.getElementById('chartConn').getContext('2d'), { 
+                type: 'line', 
+                data: { labels: [], datasets: [ 
+                    { label: 'TCP', data: [], borderColor: '#6366f1', borderWidth: 2, tension: 0.4, pointRadius: 0 }, 
+                    { label: 'UDP', data: [], borderColor: '#d946ef', borderWidth: 2, tension: 0.4, pointRadius: 0 } 
+                ]}, options: commonOptions 
+            });
             
             const pingOptions = { 
                 responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, 
@@ -977,11 +1029,32 @@ echo "✅ Linux 探针安装成功！"
                 plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } }, tooltip: { enabled: true, mode: 'index', intersect: false } }, 
                 elements: { point: { radius: 0, hitRadius: 10, hoverRadius: 4 }, line: { tension: 0.3, borderWidth: 2 } } 
             };
+            
             charts.ping = new Chart(document.getElementById('chartPing').getContext('2d'), { 
                 type: 'line', 
-                data: { labels: [], datasets: [ { label: '电信', data: [], borderColor: '#10b981', backgroundColor: 'transparent' }, { label: '联通', data: [], borderColor: '#f59e0b', backgroundColor: 'transparent' }, { label: '移动', data: [], borderColor: '#3b82f6', backgroundColor: 'transparent' }, { label: '字节', data: [], borderColor: '#8b5cf6', backgroundColor: 'transparent' } ] }, 
+                data: { labels: [], datasets: [ 
+                    { label: '电信', data: [], borderColor: '#10b981', backgroundColor: 'transparent' }, 
+                    { label: '联通', data: [], borderColor: '#f59e0b', backgroundColor: 'transparent' }, 
+                    { label: '移动', data: [], borderColor: '#3b82f6', backgroundColor: 'transparent' }, 
+                    { label: '字节', data: [], borderColor: '#8b5cf6', backgroundColor: 'transparent' } 
+                ] }, 
                 options: pingOptions 
             });
+
+            const maxDisplayPoints = 350; 
+            const updateChartData = (chart, newData, datasetIndex = 0) => { 
+                const dataArr = chart.data.datasets[datasetIndex].data; 
+                dataArr.push(newData); 
+                if (dataArr.length > maxDisplayPoints) dataArr.shift(); 
+                chart.update(); 
+            };
+            const updateLabels = (chart, label) => {
+                const labels = chart.data.labels;
+                labels.push(label);
+                if (labels.length > maxDisplayPoints) labels.shift();
+            };
+
+            let initialHistoryLoaded = false;
 
             async function fetchData() {
               try {
@@ -989,7 +1062,6 @@ echo "✅ Linux 探针安装成功！"
                 const cCode = (data.country || 'xx').toLowerCase();
                 document.getElementById('head-flag').innerHTML = cCode !== 'xx' ? \`<img src="https://flagcdn.com/24x18/\${cCode}.png" alt="\${cCode}" style="vertical-align: middle; margin-right: 8px; border-radius: 2px;">\` : '🏳️ ';
                 document.getElementById('val-uptime').innerText = data.uptime || 'N/A'; document.getElementById('val-arch').innerText = data.arch || 'N/A'; document.getElementById('val-os').innerText = data.os || 'N/A'; document.getElementById('val-cpuinfo').innerText = data.cpu_info || 'N/A'; document.getElementById('val-load').innerText = data.load_avg || '0.00'; document.getElementById('val-boot').innerText = data.boot_time || 'N/A'; 
-                
                 document.getElementById('val-traffic').innerText = formatBytes(data.${txField} || 0) + ' / ' + formatBytes(data.${rxField} || 0);
 
                 const isOnline = (Date.now() - data.last_updated) < 30000;
@@ -999,45 +1071,46 @@ echo "✅ Linux 探针安装成功！"
                 document.getElementById('text-cpu').innerText = data.cpu + '%'; document.getElementById('text-ram').innerText = data.ram + '%'; document.getElementById('text-swap').innerText = 'Swap: ' + data.swap_used + ' MiB / ' + data.swap_total + ' MiB'; document.getElementById('text-proc').innerText = data.processes || '0'; document.getElementById('text-net-in').innerText = formatBytes(data.net_in_speed) + '/s'; document.getElementById('text-net-out').innerText = formatBytes(data.net_out_speed) + '/s'; document.getElementById('text-tcp').innerText = data.tcp_conn || '0'; document.getElementById('text-udp').innerText = data.udp_conn || '0';
                 let diskTotal = parseFloat(data.disk_total) || 0; let diskUsed = parseFloat(data.disk_used) || 0; let diskPct = parseInt(data.disk) || 0;
                 document.getElementById('text-disk').innerText = diskPct + '%'; document.getElementById('disk-bar').style.width = diskPct + '%'; document.getElementById('text-disk-detail').innerText = (diskUsed/1024).toFixed(2) + ' GiB / ' + (diskTotal/1024).toFixed(2) + ' GiB';
-                
                 document.getElementById('t-ct').innerText = data.ping_ct + 'ms'; document.getElementById('t-cu').innerText = data.ping_cu + 'ms'; document.getElementById('t-cm').innerText = data.ping_cm + 'ms'; document.getElementById('t-bd').innerText = data.ping_bd + 'ms';
 
-                // ==========================
-                // 核心：应用后端返回的历史数据
-                // ==========================
                 let hist = {};
                 try { if(data.history) hist = JSON.parse(data.history); } catch(e) {}
                 
-                if (hist.time && hist.time.length > 0) {
-                    charts.cpu.data.labels = hist.time;
-                    charts.cpu.data.datasets[0].data = hist.cpu || Array(30).fill(0);
-                    charts.cpu.update();
-
-                    charts.ram.data.labels = hist.time;
-                    charts.ram.data.datasets[0].data = hist.ram || Array(30).fill(0);
-                    charts.ram.update();
-
-                    charts.proc.data.labels = hist.time;
-                    charts.proc.data.datasets[0].data = hist.proc || Array(30).fill(0);
-                    charts.proc.update();
-
-                    charts.net.data.labels = hist.time;
-                    charts.net.data.datasets[0].data = hist.net_in || Array(30).fill(0);
-                    charts.net.data.datasets[1].data = hist.net_out || Array(30).fill(0);
-                    charts.net.update();
-
-                    charts.conn.data.labels = hist.time;
-                    charts.conn.data.datasets[0].data = hist.tcp || Array(30).fill(0);
-                    charts.conn.data.datasets[1].data = hist.udp || Array(30).fill(0);
-                    charts.conn.update();
-
-                    charts.ping.data.labels = hist.time;
-                    charts.ping.data.datasets[0].data = hist.ping_ct || Array(30).fill(0);
-                    charts.ping.data.datasets[1].data = hist.ping_cu || Array(30).fill(0);
-                    charts.ping.data.datasets[2].data = hist.ping_cm || Array(30).fill(0);
-                    charts.ping.data.datasets[3].data = hist.ping_bd || Array(30).fill(0);
-                    charts.ping.update();
+                if (!initialHistoryLoaded && hist.time && hist.time.length > 0) {
+                    const populate = (chart, hDataList) => {
+                        chart.data.labels = [...hist.time];
+                        hDataList.forEach((hData, i) => { chart.data.datasets[i].data = hData ? [...hData] : Array(hist.time.length).fill(0); });
+                        chart.update();
+                    };
+                    populate(charts.cpu, [hist.cpu]);
+                    populate(charts.ram, [hist.ram]);
+                    populate(charts.proc, [hist.proc]);
+                    populate(charts.net, [hist.net_in, hist.net_out]);
+                    populate(charts.conn, [hist.tcp, hist.udp]);
+                    populate(charts.ping, [hist.ping_ct, hist.ping_cu, hist.ping_cm, hist.ping_bd]);
+                    initialHistoryLoaded = true;
                 }
+
+                const nowTime = new Date(); 
+                const timeLabel = nowTime.getHours().toString().padStart(2, '0') + ':' + String(nowTime.getMinutes()).padStart(2, '0') + ':' + String(nowTime.getSeconds()).padStart(2, '0');
+                
+                updateLabels(charts.cpu, timeLabel); updateChartData(charts.cpu, parseFloat(data.cpu) || 0, 0);
+                updateLabels(charts.ram, timeLabel); updateChartData(charts.ram, parseFloat(data.ram) || 0, 0);
+                updateLabels(charts.proc, timeLabel); updateChartData(charts.proc, parseInt(data.processes) || 0, 0);
+                
+                updateLabels(charts.net, timeLabel); 
+                updateChartData(charts.net, parseFloat(data.net_in_speed) || 0, 0); 
+                updateChartData(charts.net, parseFloat(data.net_out_speed) || 0, 1);
+                
+                updateLabels(charts.conn, timeLabel); 
+                updateChartData(charts.conn, parseInt(data.tcp_conn) || 0, 0); 
+                updateChartData(charts.conn, parseInt(data.udp_conn) || 0, 1);
+                
+                updateLabels(charts.ping, timeLabel); 
+                updateChartData(charts.ping, parseInt(data.ping_ct) || 0, 0); 
+                updateChartData(charts.ping, parseInt(data.ping_cu) || 0, 1);
+                updateChartData(charts.ping, parseInt(data.ping_cm) || 0, 2);
+                updateChartData(charts.ping, parseInt(data.ping_bd) || 0, 3);
 
               } catch (e) {}
             }
@@ -1052,7 +1125,10 @@ echo "✅ Linux 探针安装成功！"
       // ----------------------------------------
       // 大盘聚合首页 (包含卡片、表格、地图功能)
       // ----------------------------------------
-      const { results } = await env.DB.prepare('SELECT * FROM servers').all();
+      let { results } = await env.DB.prepare('SELECT * FROM servers').all();
+      // 在首页、表格和地图中过滤掉隐藏节点
+      results = results.filter(s => s.is_hidden !== 'true');
+
       const now = Date.now();
 
       let globalOnline = 0; let globalOffline = 0;
@@ -1101,7 +1177,7 @@ echo "✅ Linux 探针安装成功！"
       let tableBodyHtml = '';
 
       if (Object.keys(groups).length === 0) {
-        cardContentHtml = '<p style="text-align:center; width: 100%; color:#888;">暂无服务器，请在后台添加</p>';
+        cardContentHtml = '<p style="text-align:center; width: 100%; color:#888;">暂无公开服务器</p>';
       } else {
         for (const [grpName, grpServers] of Object.entries(groups)) {
           cardContentHtml += `<div class="group-header">${grpName}</div><div class="grid-container">`;
