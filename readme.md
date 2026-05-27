@@ -5,9 +5,10 @@
 已添加支持alpine系统挂载探针，已个性化CSS设置，已添加网易云外链单曲循环，可通过CSS代码实现个性化探针主题实现
 
 ### 1. 前台多节点大盘与全局统计
-<img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/1a1556c3-cd79-442c-87f2-cb56807cb6e6" />
-<img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/8a50e776-dc22-48dd-ae20-9524d17967a4" />
-<img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/fd115737-0bd0-4e7f-bc6c-bd141e4c22bf" />
+<img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/0cd9b65a-ff8e-43b2-8a5f-8a3e6e424359" />
+<img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/d341b70b-0131-4b3e-aeda-59ae36091c89" />
+<img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/9c5283b5-05cc-4fae-9e10-8f70fe81381c" />
+
 
 ### 2. 单节点实时性能折线图
 <img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/81ce19c3-7554-4dd1-818a-7ca478d3eb0d" />
