@@ -41,8 +41,8 @@
 ## 📸 界面预览
 
 ### 1. 前台多节点大盘与全局统计
-<img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/7e877150-ef47-4a21-8a15-1b3ffb3b573c" />
-<img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/1d912717-0897-489d-a4d0-1f08a97c63b4" />
+<img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/1a1556c3-cd79-442c-87f2-cb56807cb6e6" />
+<img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/8a50e776-dc22-48dd-ae20-9524d17967a4" />
 <img width="3840" height="1738" alt="image" src="https://github.com/user-attachments/assets/fd115737-0bd0-4e7f-bc6c-bd141e4c22bf" />
 
 
