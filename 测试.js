@@ -100,13 +100,12 @@ export default {
           VALUES (?, 'true', ?, 9999) ON CONFLICT(domain) DO UPDATE SET is_beacon='true', reputation_score=9999
         `).bind(SEED_NODE, Date.now()).run();
 
-        // 强力清洗历史脏数据，确保 Consensus Gravity 精准
+        // 清理由于恶意节点广播产生的离谱异常资产重力数据
         try {
-            await env.DB.prepare('UPDATE blockchain_peers SET total_asset = 0 WHERE total_asset > 1000000').run();
+            await env.DB.prepare('UPDATE blockchain_peers SET total_asset = 0 WHERE total_asset > 100000000').run();
         } catch(e) {}
-
-        const currentSlotNow = Math.max(1, Math.floor((Date.now() - EPOCH_START) / SLOT_TIME));
-        await env.DB.prepare('DELETE FROM blockchain_ledger WHERE slot_id > ?').bind(currentSlotNow + 10).run();
+        
+        // 【已删除危险的区块清理代码，底层账本永久固化】
         
         globalThis.dbInitialized = true;
       } catch (e) {
@@ -135,7 +134,7 @@ export default {
         if (server.price && server.price.match(/[\d.]+/)) {
             const match = server.price.match(/[\d.]+/);
             let rawAmount = match ? parseFloat(match[0]) : 0;
-            // 本地资产解析封顶防溢出，防止异常重力爆炸
+            // 增加本地资产解析封顶防溢出，防止价格填写异常导致重力爆炸
             rawAmount = Math.min(rawAmount, 100000); 
 
             let rate = 1; const pUpper = server.price.toUpperCase();
@@ -338,7 +337,7 @@ export default {
                     `).bind(block.slot_id, block.proposer_domain, block.block_hash, block.payload, Date.now()).run();
                     
                     const pl = JSON.parse(block.payload);
-                    const safeTotalAsset = Math.min(parseFloat(pl.total_asset)||0, 1000000); 
+                    const safeTotalAsset = Math.min(parseFloat(pl.total_asset)||0, 100000000); 
                     await env.DB.prepare(`
                         INSERT INTO blockchain_peers (domain, vps_count, total_asset, last_seen) 
                         VALUES (?, ?, ?, ?) 
@@ -347,7 +346,7 @@ export default {
                     
                     if (pl.txs) await processBlockTransactions(pl.txs);
                 } else if (block.block_hash < currentBlock.block_hash) {
-                    // 发生更优分叉，精准回滚被遗弃区块的交易
+                    // 发生更优分叉，精准回滚被遗弃区块的交易，绝不清空重置余额
                     const oldPayload = JSON.parse(currentBlock.payload);
                     if (oldPayload.txs) await revertBlockTransactions(oldPayload.txs);
 
@@ -437,7 +436,7 @@ export default {
                                 if (!exist) {
                                     await env.DB.prepare(`INSERT INTO blockchain_ledger (slot_id, proposer_domain, block_hash, payload, timestamp) VALUES (?, ?, ?, ?, ?)`).bind(b.slot_id, b.proposer_domain, b.block_hash, b.payload, b.timestamp).run();
                                     const pl = JSON.parse(b.payload);
-                                    const safeTotalAsset = Math.min(parseFloat(pl.total_asset)||0, 1000000);
+                                    const safeTotalAsset = Math.min(parseFloat(pl.total_asset)||0, 100000000);
                                     await env.DB.prepare(`INSERT INTO blockchain_peers (domain, vps_count, total_asset, last_seen) VALUES (?, ?, ?, ?) ON CONFLICT(domain) DO UPDATE SET vps_count=excluded.vps_count, total_asset=excluded.total_asset, last_seen=excluded.last_seen`).bind(b.proposer_domain, parseInt(pl.vps_count)||0, safeTotalAsset, b.timestamp).run();
                                     if (pl.txs) await processBlockTransactions(pl.txs);
                                 } else if (b.block_hash < exist.block_hash) {
@@ -1493,8 +1492,8 @@ cq-ct-dualstack.ip.zstaticcdn.com:80`;
           <div style="background:#f3e8ff; padding:15px; border-radius:8px; border:1px solid #e9d5ff; margin-bottom:20px;">
             <h3 style="margin-top:0; color:#6b21a8;">💼 Web3 钱包与转账 (Cycle Ledger)</h3>
             <div class="form-group">
-                <label>本站出块奖励收款钱包地址 (自动挖矿 Cycle)</label>
-                <input type="text" id="cfg_miner_wallet" value="${sys.miner_wallet || ''}" placeholder="例如输入自定义字符串或 0x 公钥">
+                <label>本站出块奖励收款钱包地址 (自动挖矿 Cycle，请填写 0x... EVM格式地址)</label>
+                <input type="text" id="cfg_miner_wallet" value="${sys.miner_wallet || ''}" placeholder="例如 0x123...abc">
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <span style="font-size:16px; font-weight:bold; color:#7e22ce;">当前余额: ${walletBalance} Cycle</span>
@@ -2468,7 +2467,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
         }
       }
 
-      // Web3 获取去中心化排名与节点数量 
+      // Web3 获取去中心化排名与节点数量 (引入阈值截断防止资产溢出)
       let localRank = 1;
       let globalNetAsset = totalAsset;
       let globalProposer = '--';
@@ -2488,7 +2487,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
               if (p.domain !== host) {
                   let pAsset = parseFloat(p.total_asset) || 0;
                   if (isNaN(pAsset) || pAsset < 0) pAsset = 0;
-                  pAsset = Math.min(pAsset, 100000000); 
+                  pAsset = Math.min(pAsset, 100000000); // 增加同步资产解析封顶防污染
                   otherAssets += pAsset;
                   if (pAsset > totalAsset) higherCount++;
               }
@@ -2581,6 +2580,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
             const diskUsedStr = formatBytes((parseFloat(server.disk_used || 0) * 1048576).toString());
             const diskTotalStr = formatBytes((parseFloat(server.disk_total || 0) * 1048576).toString());
 
+            // 【还原】恢复原版的 vps-card HTML 和 CSS 布局
             cardContentHtml += `
               <a href="/?id=${server.id}" class="vps-card" data-country="${cCode}">
                 <div class="card-left">
@@ -2625,6 +2625,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
               </a>
             `;
 
+            // 【还原】恢复原版的 table-row 
             tableBodyHtml += `
               <tr onclick="window.location.href='/?id=${server.id}'" style="cursor:pointer;" data-country="${cCode}">
                 <td style="text-align:center;"><div class="status-dot" style="background:${statusColor}; display:inline-block; margin:0;"></div></td>
