@@ -14,7 +14,7 @@ export default {
     const host = url.origin;
     
     // ==========================================
-    // 0. 数据库自动化热创建与 V9 破壁净化
+    // 0. 数据库自动化热创建
     // ==========================================
     if (!globalThis.dbInitialized) {
       try {
@@ -65,7 +65,7 @@ export default {
         // 🚨 V9 大扫除：强制恢复被错误隔离的节点身份
         const fixFlag9 = await env.DB.prepare("SELECT value FROM settings WHERE key='fix_asset_bug_v9'").first();
         if (!fixFlag9) {
-            await env.DB.prepare("UPDATE blockchain_peers SET is_beacon = 'true'").run(); // 强制所有已知节点重获出块提名权
+            await env.DB.prepare("UPDATE blockchain_peers SET is_beacon = 'true'").run(); 
             await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('fix_asset_bug_v9', 'true')").run();
         }
 
@@ -321,23 +321,34 @@ export default {
         return peers;
     };
 
-    // 🏆 V9 核心解药：彻底粉碎“只读上一个区块”造成的孤岛死锁！
-    // 强制从全网本地数据库提取 Top 50 节点共同组建 Hash 摇号池。绝对公平！
+    // 🏆 V10 核心解药：彻底修复全网脑裂，实现 100% 确定性出块共识！
+    // 废弃本地盲目自信的摇号池，强制从上一个合法区块的 payload 中提取 active_nodes。
+    // 全球所有节点使用同一份名单、同一个哈希种子，算出绝对一致的顺位，彻底杜绝新节点的区块被撞车孤立！
     const getValidLeadersForSlot = async (slotId) => {
-        const { results: topPeers } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') ORDER BY total_asset DESC, domain ASC LIMIT 50`).all();
-        let leaderPool = topPeers.map(p => p.domain);
+        let leaderPool = [GENESIS_NODE];
+        try {
+            // 回溯寻找最近的一个包含 active_nodes 的区块
+            const { results: recentBlocks } = await env.DB.prepare('SELECT payload FROM blockchain_ledger WHERE status = 1 ORDER BY slot_id DESC LIMIT 5').all();
+            for (const b of recentBlocks) {
+                if (!b || !b.payload) continue;
+                const pl = JSON.parse(b.payload);
+                if (pl.active_nodes && Array.isArray(pl.active_nodes) && pl.active_nodes.length > 0) {
+                    leaderPool = pl.active_nodes;
+                    break;
+                }
+            }
+        } catch(e) {}
         
-        // 保证自己和创世节点永远在池子里，杜绝掉队
-        if (!leaderPool.includes(host)) leaderPool.push(host);
+        // 确保创世节点兜底，但绝不再随意把 host 塞进去打破全网共识
         if (!leaderPool.includes(GENESIS_NODE)) leaderPool.push(GENESIS_NODE);
         
         leaderPool = [...new Set(leaderPool)].sort(); // 强制字母排序，保证全网算出的顺序100%一致
 
-        const hashHex = await miniHash(slotId + "-deterministic-seed-v9");
+        const hashHex = await miniHash(slotId + "-deterministic-seed-v10");
         const pseudoRandom = parseInt(hashHex.substring(0, 8), 16);
         
         const leaders = [];
-        // 提供 5 个顺位接替者，万一前面的人网络卡了，后面的立刻替补！
+        // 提供 5 个顺位接替者
         for(let i=0; i<5; i++) {
             leaders.push(leaderPool[(pseudoRandom + i) % leaderPool.length]);
         }
@@ -585,8 +596,6 @@ export default {
 
                 const expectedSig = await miniHash(`${block.proposer_domain}-${block.slot_id}-${block.payload}`);
                 if (block.signature !== expectedSig) return consensusResponse('Invalid Signature', 403);
-
-                // 解除本地 Leader 拦截！只要新块难度合法，不论是谁打包的，强制接受，打破护城河！
                 
                 const expectedHash = await miniHash(`${block.slot_id}-${block.parent_hash}-${block.proposer_domain}-${block.payload}`);
                 if (expectedHash !== block.block_hash) return consensusResponse('Invalid Hash Chain', 400);
@@ -618,7 +627,7 @@ export default {
                 const currentBlock = await env.DB.prepare('SELECT block_hash, total_difficulty FROM blockchain_ledger WHERE slot_id = ?').bind(block.slot_id).first();
                 const safeTotalAsset = Math.min(parseFloat(pl.total_asset)||0, 500000); 
 
-                // 🚨 难度覆盖：如果同一个 Slot 收到别人打的块，只要他的难度比我高（资产多），我无条件删掉我自己的块，认他做主！
+                // 🚨 难度覆盖
                 if (currentBlock) {
                     if (blockDifficulty > (currentBlock.total_difficulty || 0) || (blockDifficulty === (currentBlock.total_difficulty || 0) && block.block_hash < currentBlock.block_hash)) {
                         await env.DB.prepare('DELETE FROM blockchain_ledger WHERE slot_id = ?').bind(block.slot_id).run();
@@ -649,7 +658,7 @@ export default {
                     const { results: wallets } = await env.DB.prepare('SELECT address, balance FROM blockchain_wallets WHERE balance > 0').all();
                     const snapMap = {};
                     wallets.forEach(w => snapMap[w.address] = w.balance);
-                    await env.DB.prepare('INSERT OR REPLACE INTO checkpoints (slot_id, state_root, state_snapshot, block_hash, signature) VALUES (?, ?, ?, ?, ?)').bind(block.slot_id, pl.state_root, JSON.stringify(snapMap), hash, signature).run();
+                    await env.DB.prepare('INSERT OR REPLACE INTO checkpoints (slot_id, state_root, state_snapshot, block_hash, signature) VALUES (?, ?, ?, ?, ?)').bind(block.slot_id, pl.state_root, JSON.stringify(snapMap), block.block_hash, block.signature).run();
                 }
 
                 if (!globalThis.gossipCache) globalThis.gossipCache = new Set();
@@ -715,7 +724,6 @@ export default {
                     const localTopRow = await env.DB.prepare('SELECT slot_id FROM blockchain_ledger WHERE status = 1 ORDER BY slot_id DESC LIMIT 1').first();
                     since = localTopRow ? localTopRow.slot_id : 0;
                     
-                    // 仅向后回溯 10 个区块进行轻量级同步，避免沉重的数据包卡死系统
                     const syncRes = await fetchWithTimeSync(`${peerDomain}/api/consensus/sync?since_slot=${Math.max(0, since - 10)}`, {}, peerDomain);
                     if (!syncRes.ok) return false;
                     const syncData = await syncRes.json();
@@ -820,8 +828,9 @@ export default {
                 blockTxs.push({ id: coinbaseId, type: 'COINBASE', to: sys.miner_wallet, amount: 1, timestamp: currentNetTime });
             }
 
-            // 把所有的兄弟全带上
-            const { results: topPeers } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') ORDER BY total_asset DESC, domain ASC LIMIT 50`).all();
+            // 🏆 V10 扩大摇号池，让新部署的 0 资产节点也能加入全网大名单参与公平摇号！
+            const activeThreshold = Date.now() - 86400000; // 24小时内活跃即可
+            const { results: topPeers } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') AND last_seen > ? ORDER BY total_asset DESC, last_seen DESC LIMIT 100`).bind(activeThreshold).all();
             let active_nodes = topPeers.map(p => p.domain);
             if (!active_nodes.includes(host)) active_nodes.push(host);
             if (!active_nodes.includes(GENESIS_NODE)) active_nodes.push(GENESIS_NODE);
@@ -1901,7 +1910,6 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
             ctx.waitUntil(checkOfflineNodes());
         }
         
-        // 🚀 V9 不再限制死锁：取消单次 2 秒锁，只要在这个槽内，持续监听是否有资格替补出块
         const currentSlotThrottle = Math.max(1, Math.floor((nowMsForThrottle - EPOCH_START) / SLOT_TIME));
         
         ctx.waitUntil((async () => {
@@ -2115,7 +2123,6 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
                   pAsset = Math.min(pAsset, 500000); 
                   otherAssets += pAsset;
                   
-                  // 🏆 排名绝对唯一：即使资产为 0，也会用域名强行分出先后，再无并列第一
                   if (pAsset > totalAsset + 0.001) {
                       higherCount++;
                   } else if (Math.abs(pAsset - totalAsset) <= 0.001) {
