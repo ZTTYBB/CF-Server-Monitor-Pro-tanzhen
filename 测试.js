@@ -161,14 +161,20 @@ export default {
         return new Response(body, { status, headers });
     };
 
-    const fetchWithTimeSync = async (url, opts) => {
-        const res = await fetch(url, opts);
-        const netTime = res.headers.get('X-Network-Time');
-        if (netTime) {
-            const parsed = parseInt(netTime);
-            if (!isNaN(parsed)) ctx.waitUntil(updateNetworkTimeOffset(parsed));
+    // 【修复】强依赖 Fetch 超时断开连接，避免挂起打满 Worker 并发
+    const fetchWithTimeSync = async (url, opts = {}) => {
+        if (!opts.signal) opts.signal = AbortSignal.timeout(3000);
+        try {
+            const res = await fetch(url, opts);
+            const netTime = res.headers.get('X-Network-Time');
+            if (netTime) {
+                const parsed = parseInt(netTime);
+                if (!isNaN(parsed)) ctx.waitUntil(updateNetworkTimeOffset(parsed));
+            }
+            return res;
+        } catch(e) {
+            return new Response(null, { status: 504 }); // 超时直接返回空包
         }
-        return res;
     };
 
     // ==========================================
@@ -337,7 +343,6 @@ export default {
     // 在确认生成块或接收块后，生成捆绑事务 Statement
     const getTxsStateStmts = (allTxs, stateDiffMap) => {
         let batchStmts = [];
-        // 清理被打包池覆盖的所有 TX (不管合法非法，既然已被处理则全踢出)
         for (const tx of allTxs) {
             if (tx && tx.id) {
                 batchStmts.push(env.DB.prepare(`DELETE FROM mempool WHERE tx_id = ?`).bind(tx.id));
@@ -448,14 +453,13 @@ export default {
             
             // 终局性红线保护：绝不允许回滚超过确认深度的历史
             if (localHeight - forkStartSlot >= FINALITY_DEPTH) {
-                console.error(`Panic: Fork attempt at slot ${forkStartSlot} violates finality depth (local height: ${localHeight}). Discarding fork.`);
+                console.error(`Panic: Fork attempt at slot ${forkStartSlot} violates finality depth. Discarding.`);
                 return;
             }
 
             let forkResolved = false;
             let batchStmts = [];
             
-            // 事务原子替换防闪烁
             batchStmts.push(env.DB.prepare(`UPDATE blockchain_ledger SET status = 0 WHERE slot_id >= ?`).bind(forkStartSlot));
 
             for (const b of syncData.blocks) {
@@ -474,9 +478,7 @@ export default {
                     await rebuildBalances();
                 }
             }
-        } catch(e) {
-            console.error("Fork Resolution Error:", e);
-        }
+        } catch(e) {}
     };
 
     // ==========================================
@@ -611,7 +613,7 @@ export default {
                 const pl = JSON.parse(block.payload);
                 let evalResult = { validTxs: [], stateDiff: new Map() };
 
-                // [补丁 A] State-Guard: 预测执行状态树验证，自动剔除双花非法交易
+                // [补丁 A] State-Guard: 预测执行状态树验证
                 if (pl.txs && pl.state_root) {
                     evalResult = await evaluateTxs(pl.txs);
                     if (evalResult.state_root !== pl.state_root) {
@@ -634,7 +636,7 @@ export default {
                         if (obsCount >= 3) {
                             ctx.waitUntil(resolveFork(block.proposer_domain, Math.max(0, localHeight - 20)));
                             globalThis.forkObservations.delete(block.proposer_domain);
-                            return consensusResponse('Fork verified. Remote chain is heavier. Auto-resolving in background.', 202);
+                            return consensusResponse('Fork verified. Auto-resolving in background.', 202);
                         }
                         return consensusResponse(`Fork detected. Observing heavy chain (Count: ${obsCount}/3)...`, 202);
                     } else if (blockDifficulty === localDifficulty && block.block_hash < localPrevHash) {
@@ -668,7 +670,6 @@ export default {
                         ON CONFLICT(domain) DO UPDATE SET vps_count=excluded.vps_count, total_asset=excluded.total_asset, last_seen=MAX(last_seen, excluded.last_seen)
                     `).bind(block.proposer_domain, parseInt(pl.vps_count)||0, safeTotalAsset, Date.now()));
                     
-                    // 将合法执行的记录推入同一事务
                     if (pl.txs && pl.txs.length > 0) {
                         allStmts.push(...getTxsStateStmts(pl.txs, evalResult.stateDiff));
                     }
@@ -688,17 +689,19 @@ export default {
                         await env.DB.prepare('INSERT OR REPLACE INTO checkpoints (slot_id, state_root, state_snapshot, block_hash, signature) VALUES (?, ?, ?, ?, ?)').bind(block.slot_id, pl.state_root, JSON.stringify(snapMap), block.block_hash, block.signature || '').run();
                     }
 
+                    // 【修复】Gossip 广播风暴防护
                     if (!globalThis.gossipCache) globalThis.gossipCache = new Set();
                     if (!globalThis.gossipCache.has(block.block_hash)) {
                         globalThis.gossipCache.add(block.block_hash);
                         if (globalThis.gossipCache.size > 500) globalThis.gossipCache.clear();
                         
                         ctx.waitUntil((async () => {
-                            await new Promise(r => setTimeout(r, 200));
+                            await new Promise(r => setTimeout(r, 200 + Math.random() * 500)); // 随机延迟错开爆发点
                             const tip = await env.DB.prepare('SELECT block_hash FROM blockchain_ledger WHERE status = 1 ORDER BY slot_id DESC LIMIT 1').first();
                             if (tip && tip.block_hash === block.block_hash) {
                                 const blockData = { slot_id: block.slot_id, proposer_domain: block.proposer_domain, block_hash: block.block_hash, parent_hash: block.parent_hash, payload: block.payload, timestamp: block.timestamp, total_difficulty: blockDifficulty, signature: block.signature };
-                                const { results: beacons } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') AND domain != ? ORDER BY RANDOM() LIMIT 5`).bind(host).all();
+                                // 从随机发5个降到发3个
+                                const { results: beacons } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') AND domain != ? ORDER BY RANDOM() LIMIT 3`).bind(host).all();
                                 for (const b of beacons) {
                                     fetchWithTimeSync(`${b.domain}/api/consensus/submit`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(blockData) }).catch(() => {});
                                 }
@@ -778,7 +781,6 @@ export default {
                     blockTxs.push({ id: coinbaseId, type: 'COINBASE', to: sys.miner_wallet, amount: 1, timestamp: currentNetTime });
                 }
 
-                // 内存中提取合法交易树根，自动剥离垃圾
                 const evalResult = await evaluateTxs(blockTxs);
                 const state_root = evalResult.state_root;
                 const finalBlockTxs = blockTxs; 
@@ -808,7 +810,8 @@ export default {
                 globalThis.gossipCache.add(hash);
 
                 const blockData = { slot_id: currentSlot, proposer_domain: host, block_hash: hash, parent_hash: parentHash, payload: payloadStr, timestamp: currentNetTime, total_difficulty: currentDifficulty, signature: signature };
-                const { results: beacons } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') AND domain != ? ORDER BY RANDOM() LIMIT 5`).bind(host).all();
+                // 【修复】减少广播节点数
+                const { results: beacons } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') AND domain != ? ORDER BY RANDOM() LIMIT 3`).bind(host).all();
                 for (const b of beacons) {
                     fetchWithTimeSync(`${b.domain}/api/consensus/submit`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(blockData) }).catch(() => {});
                 }
@@ -919,7 +922,8 @@ export default {
         await fetch(`https://api.telegram.org/bot${sys.tg_bot_token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: sys.tg_chat_id, text: msg, parse_mode: 'HTML' })
+          body: JSON.stringify({ chat_id: sys.tg_chat_id, text: msg, parse_mode: 'HTML' }),
+          signal: AbortSignal.timeout(3000)
         });
       } catch (e) {}
     };
@@ -1205,7 +1209,8 @@ export default {
       
       if (!cachedNodesData || Date.now() - lastFetchTime > CACHE_TTL) {
           try {
-              const resp = await fetch('https://lf3-ips.zstaticcdn.com');
+              // 【修复】加上 Fetch 超时
+              const resp = await fetch('https://lf3-ips.zstaticcdn.com', { signal: AbortSignal.timeout(3000) });
               if (resp.ok) {
                   cachedNodesData = await resp.text();
                   lastFetchTime = Date.now();
@@ -1490,6 +1495,7 @@ export default {
         ${getFooterHtml(sys)}
 
         <script>
+          // 【修复】减少后台页面的轮询频率
           setInterval(async () => {
               const addr = document.getElementById('cfg_miner_wallet').value;
               if(addr) {
@@ -1499,7 +1505,7 @@ export default {
                       document.getElementById('admin-wallet-balance').innerText = data.balance.toFixed(2);
                   } catch(e){}
               }
-          }, 3500);
+          }, 15000);
 
           function toggleCustomCss() {
             const theme = document.getElementById('cfg_theme').value;
@@ -1811,7 +1817,6 @@ while true; do
   
   PAYLOAD="{\\"id\\": \\"\\$SERVER_ID\\", \\"secret\\": \\"\\$SECRET\\", \\"metrics\\": { \\"cpu\\": \\"\\$CPU\\", \\"ram\\": \\"\\$RAM\\", \\"ram_total\\": \\"\\$RAM_TOTAL\\", \\"ram_used\\": \\"\\$RAM_USED\\", \\"swap_total\\": \\"\\$SWAP_TOTAL\\", \\"swap_used\\": \\"\\$SWAP_USED\\", \\"disk\\": \\"\\$DISK\\", \\"disk_total\\": \\"\\$DISK_TOTAL\\", \\"disk_used\\": \\"\\$DISK_USED\\", \\"load\\": \\"\\$LOAD\\", \\"uptime\\": \\"\\$UPTIME\\", \\"boot_time\\": \\"\\$BOOT_TIME\\", \\"net_rx\\": \\"\\$RX_NOW\\", \\"net_tx\\": \\"\\$TX_NOW\\", \\"net_in_speed\\": \\"\\$RX_SPEED\\", \\"net_out_speed\\": \\"\\$TX_SPEED\\", \\"os\\": \\"\\$OS\\", \\"arch\\": \\"\\$ARCH\\", \\"cpu_info\\": \\"\\$CPU_INFO\\", \\"processes\\": \\"\\$PROCESSES\\", \\"tcp_conn\\": \\"\\$TCP_CONN\\", \\"udp_conn\\": \\"\\$UDP_CONN\\", \\"ip_v4\\": \\"\\$IPV4\\", \\"ip_v6\\": \\"\\$IPV6\\", \\"ping_ct\\": \\"\\$PING_CT\\", \\"ping_cu\\": \\"\\$PING_CU\\", \\"ping_cm\\": \\"\\$PING_CM\\", \\"ping_bd\\": \\"\\$PING_BD\\", \\"virt\\": \\"\\$VIRT\\" }}"
   
-  # 接收 Cloudflare Worker 返回的最新配置进行热重载
   RES=\\$(${cmdApp} -s -X POST -H "Content-Type: application/json" -d "\\$PAYLOAD" "\\$WORKER_URL" 2>/dev/null)
   
   if echo "\\$RES" | grep -q "INTERVAL="; then
@@ -1981,17 +1986,28 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
           id
         ).run();
 
-        ctx.waitUntil(checkOfflineNodes());
-        
-        const { results: allS } = await env.DB.prepare('SELECT price, expire_date FROM servers WHERE is_hidden="false"').all();
-        let currentAsset = 0;
-        for(const s of allS) {
-            const ast = calcServerAsset(s, nowMs).amount;
-            currentAsset += isNaN(ast) ? 0 : ast;
+        // 【修复】基于时间的全局防抖：防止高频心跳打爆底层 DB 事务与 Fetch 限额
+        const nowMsForThrottle = Date.now();
+        if (!globalThis.lastOfflineCheck || nowMsForThrottle - globalThis.lastOfflineCheck > 60000) {
+            globalThis.lastOfflineCheck = nowMsForThrottle;
+            ctx.waitUntil(checkOfflineNodes());
         }
-        currentAsset = Math.min(currentAsset, 100000000); 
         
-        ctx.waitUntil(mineAndGossip(currentAsset, allS.length));
+        const currentSlotThrottle = Math.max(1, Math.floor((nowMsForThrottle - EPOCH_START) / SLOT_TIME));
+        if (globalThis.lastMinedSlot !== currentSlotThrottle) {
+            globalThis.lastMinedSlot = currentSlotThrottle;
+            
+            ctx.waitUntil((async () => {
+                const { results: allS } = await env.DB.prepare('SELECT price, expire_date FROM servers WHERE is_hidden="false"').all();
+                let currentAsset = 0;
+                for(const s of allS) {
+                    const ast = calcServerAsset(s, nowMsForThrottle).amount;
+                    currentAsset += isNaN(ast) ? 0 : ast;
+                }
+                currentAsset = Math.min(currentAsset, 100000000); 
+                await mineAndGossip(currentAsset, allS.length);
+            })());
+        }
 
         return new Response(`INTERVAL=${sys.report_interval || '5'}|CT=${sys.ping_node_ct || 'default'}|CU=${sys.ping_node_cu || 'default'}|CM=${sys.ping_node_cm || 'default'}`, { status: 200 });
       } catch (e) {
@@ -2215,7 +2231,8 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
                 }
               } catch (e) {}
             }
-            setInterval(fetchData, 3000); fetchData();
+            // 【修复】减少详情页轮询压力
+            setInterval(fetchData, 15000); fetchData();
           </script>
           ${sys.custom_script || ''}
         </body>
@@ -2877,6 +2894,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
              applyFilter();
           });
 
+          // 【修复】减少大盘数据轮询压力
           setInterval(async () => {
             try {
               const currentUrl = new URL(location.href);
@@ -2909,7 +2927,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
               drawMarkers(); 
               applyFilter(); 
             } catch (e) {}
-          }, 3500); 
+          }, 15000); 
         </script>
         ${sys.custom_script || ''}
       </body>
