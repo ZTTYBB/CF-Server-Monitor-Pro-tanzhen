@@ -1,4 +1,4 @@
-name = "CF-Server-Monitor-Pro"
+name = "CFServerMonitorPro"
 main = "src/index.js"
 compatibility_date = "2026-06-01"
 
@@ -10,4 +10,4 @@ database_id = "" # 留空即可，一键部署时向导会自动处理
 
 # 告诉 Cloudflare 该项目需要环境变量，部署向导会提示用户填写
 [vars]
-API_SECRET = "your_strong_password_here" # 默认探针通信密钥和后台管理密码
+API_SECRET = "你的密码" # 默认探针通信密钥和后台管理密码
