@@ -1,3 +1,4 @@
+一键极速部署
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/a63414262/CF-Server-Monitor-Pro)
 ## 📸 界面预览
 
