@@ -182,7 +182,7 @@ export default {
       is_public: 'true', show_price: 'true', show_expire: 'true', show_bw: 'true', show_tf: 'true',
       show_asset: 'false', asset_currency: '元', is_beacon: 'true', enable_ranking: 'false', ranking_api: '',
       tg_notify: 'false', tg_bot_token: '', tg_chat_id: '',
-      auto_reset_traffic: 'false', report_interval: '5',
+      auto_reset_traffic: 'false', report_interval: '30',
       ping_node_ct: 'default', ping_node_cu: 'default', ping_node_cm: 'default',
       miner_wallet: '', ping_nodes_list: ''
     };
