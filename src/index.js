@@ -191,7 +191,7 @@ export default {
       is_public: 'true', show_price: 'true', show_expire: 'true', show_bw: 'true', show_tf: 'true',
       show_asset: 'false', asset_currency: '元', is_beacon: 'true', enable_ranking: 'false', ranking_api: '',
       tg_notify: 'false', tg_bot_token: '', tg_chat_id: '',
-      auto_reset_traffic: 'false', report_interval: '30',
+      auto_reset_traffic: 'false', report_interval: '40',
       ping_node_ct: 'default', ping_node_cu: 'default', ping_node_cm: 'default',
       miner_wallet: '', ping_nodes_list: ''
     };
@@ -1397,7 +1397,7 @@ export default {
               </div>
               <div class="form-group">
                 <label>⏱️ Agent 上报间隔 (秒)</label>
-                <input type="number" id="cfg_report_interval" value="${sys.report_interval || '5'}" min="1" max="120" placeholder="默认 5 秒">
+                <input type="number" id="cfg_report_interval" value="${sys.report_interval || '40'}" min="1" max="120" placeholder="默认 40 秒">
               </div>
             </div>
             <div>
