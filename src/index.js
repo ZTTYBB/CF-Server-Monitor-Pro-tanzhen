@@ -1,8 +1,8 @@
 // ==========================================
 // 创世时间戳与网络参数 (Genesis Setup)
 // ==========================================
-const PROTOCOL_VERSION = 'v16_hardfork'; // 🚀 V16 硬分叉：统一签名哈希顺序，彻底解决信息孤岛与分叉问题
-const EPOCH_START = 1780320600000; // 2026年6月1日北京时间21:30:00
+const PROTOCOL_VERSION = 'v18_mjj_hardfork'; // 🚀 V18 硬分叉：MJJ减半挖矿 + 物理算力重构 + 纯粹去中心化抽奖
+const EPOCH_START = 1780419600000; // 🚀 2026年6月3日 北京时间 01:00:00 (创世纪元)
 const GENESIS_NODE = 'https://odd-art-043f.a68561918.workers.dev'; // 以你的主站为锚点
 const DEFAULT_SEEDS = [
     GENESIS_NODE,
@@ -13,6 +13,7 @@ const SLOT_TIME = 10000; // 10秒出块
 const OFFLINE_THRESHOLD = 300000; // 5分钟离线判定
 const FINALITY_DEPTH = 6; // 终局确认深度
 const CHECKPOINT_INTERVAL = 500; // 每 500 块生成一个确定性检查点
+const HALVING_INTERVAL = 210000; // 🚀 MJJ 减半周期 (约24.3天)
 
 export default {
   async fetch(request, env, ctx) {
@@ -48,7 +49,8 @@ export default {
           agent_os: "TEXT DEFAULT 'debian'",
           history: "TEXT DEFAULT '{}'",
           is_hidden: "TEXT DEFAULT 'false'",
-          virt: "TEXT DEFAULT ''"
+          virt: "TEXT DEFAULT ''",
+          cpu_cores: "TEXT DEFAULT '1'" // 🚀 V18 新增：硬件核心数用于物理算力
         };
 
         for (const [colName, colDef] of Object.entries(newCols)) {
@@ -79,6 +81,7 @@ export default {
 
         try { await env.DB.prepare(`ALTER TABLE blockchain_peers ADD COLUMN time_offset INTEGER DEFAULT 0`).run(); } catch(e){}
         try { await env.DB.prepare(`ALTER TABLE blockchain_peers ADD COLUMN wallet_address TEXT DEFAULT ''`).run(); } catch(e){}
+        try { await env.DB.prepare(`ALTER TABLE blockchain_peers ADD COLUMN total_power REAL DEFAULT 0`).run(); } catch(e){} // 🚀 V18 新增：物理算力总和
 
         const fixFlag9 = await env.DB.prepare("SELECT value FROM settings WHERE key='fix_asset_bug_v9'").first();
         if (!fixFlag9) {
@@ -164,8 +167,8 @@ export default {
         let peerInsertStmts = [];
         for (const peer of initialPeers) {
             peerInsertStmts.push(env.DB.prepare(`
-              INSERT OR IGNORE INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, last_seen, reputation_score)
-              VALUES (?, 'true', 0, 0, ?, 9999)
+              INSERT OR IGNORE INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, total_power, last_seen, reputation_score)
+              VALUES (?, 'true', 0, 0, 0, ?, 9999)
             `).bind(peer, Date.now()));
         }
         if (peerInsertStmts.length > 0) await env.DB.batch(peerInsertStmts);
@@ -176,7 +179,7 @@ export default {
             if (host !== seed) {
                 ctx.waitUntil(fetch(`${seed}/api/consensus/register`, {
                     method: 'POST', headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({ domain: host, is_beacon: 'true', vps_count: 0, total_asset: 0 })
+                    body: JSON.stringify({ domain: host, is_beacon: 'true', vps_count: 0, total_asset: 0, total_power: 0 })
                 }).catch(()=>{}));
             }
         }
@@ -304,6 +307,7 @@ export default {
       return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     };
 
+    // 🚀 V18: 仅用于前端 UI 辅助显示数字资产，不再用于核心共识
     const calcServerAsset = (server, nowMs) => {
         let amount = 0; let remValue = 0;
         try {
@@ -350,6 +354,45 @@ export default {
         return { amount: amount || 0, remValue: remValue || 0 };
     };
 
+    // 🚀 V18 核心算法：真实物理算力计算（硬指标 + 三网惩罚 + 在线时长加成）
+    const calcServerPower = (server, nowMs) => {
+        let cores = parseInt(server.cpu_cores) || 1;
+        let ramTotalMB = parseFloat(server.ram_total) || 1024;
+        let basePower = (cores * 10) + (ramTotalMB / 1024 * 5);
+
+        let netPenalty = 1.0;
+        const pct = parseInt(server.ping_ct) || 0;
+        const pcu = parseInt(server.ping_cu) || 0;
+        const pcm = parseInt(server.ping_cm) || 0;
+        // 如果任意一网测速返回0或大于等于2000，说明网络拉跨或者被墙
+        if (pct === 0 || pct >= 2000 || pcu === 0 || pcu >= 2000 || pcm === 0 || pcm >= 2000) {
+            netPenalty = 0.1; 
+        }
+
+        let uptimeBonus = 1.0;
+        if (server.boot_time && server.boot_time !== 'Unknown') {
+            const bootStr = server.boot_time.replace(' ', 'T'); 
+            const bootTimeMs = new Date(bootStr).getTime();
+            if (!isNaN(bootTimeMs)) {
+                const uptimeMs = nowMs - bootTimeMs;
+                if (uptimeMs > 30 * 24 * 60 * 60 * 1000) {
+                    uptimeBonus = 2.0; // 满月超级信标
+                } else if (uptimeMs > 7 * 24 * 60 * 60 * 1000) {
+                    uptimeBonus = 1.5; // 满周高级节点
+                }
+            }
+        }
+        
+        return basePower * netPenalty * uptimeBonus;
+    };
+
+    // 🚀 V18 MJJ减半产出算法
+    const getCoinbaseReward = (slotId) => {
+        const halvings = Math.floor(slotId / HALVING_INTERVAL);
+        if (halvings >= 64 || slotId < 0) return 0;
+        return 1.0 / Math.pow(2, halvings);
+    };
+
     const getBootstrapPeers = async () => {
         const { results } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') ORDER BY last_seen DESC LIMIT 50`).all();
         let peers = results.map(r => r.domain);
@@ -384,6 +427,7 @@ export default {
         return leaders;
     };
 
+    // 🚀 V18 支持抽奖的 Txs 验证
     const evaluateTxs = async (txs) => {
         const { results: wallets } = await env.DB.prepare('SELECT address, balance FROM blockchain_wallets').all();
         let balances = new Map();
@@ -393,9 +437,13 @@ export default {
         let stateDiff = new Map();
 
         for (const tx of txs) {
-            if (!tx || !tx.id || tx.amount <= 0) continue;
-            const amt = parseFloat(tx.amount);
+            if (!tx || !tx.id || (tx.amount < 0 && tx.type !== 'LOTTERY_CREATE')) continue;
+            const amt = parseFloat(tx.amount) || 0;
             
+            if (tx.type === 'LOTTERY_CREATE') {
+                validTxs.push(tx); continue; // 创建抽奖提案无需直接扣费
+            }
+
             if (tx.type !== 'COINBASE' && tx.from) {
                 const currentFrom = balances.get(tx.from) || 0;
                 if (currentFrom < amt) continue; 
@@ -403,9 +451,14 @@ export default {
                 stateDiff.set(tx.from, (stateDiff.get(tx.from) || 0) - amt);
             }
             
-            if (tx.to) {
-                balances.set(tx.to, (balances.get(tx.to) || 0) + amt);
-                stateDiff.set(tx.to, (stateDiff.get(tx.to) || 0) + amt);
+            let toAddr = tx.to;
+            if (tx.type === 'LOTTERY_BET') {
+                toAddr = '0x0000000000000000000000000000000000000000'; // 下注资金打入黑洞永久销毁
+            }
+
+            if (toAddr) {
+                balances.set(toAddr, (balances.get(toAddr) || 0) + amt);
+                stateDiff.set(toAddr, (stateDiff.get(toAddr) || 0) + amt);
             }
             validTxs.push(tx);
         }
@@ -462,7 +515,7 @@ export default {
                         const pl = JSON.parse(b.payload);
                         if (pl.txs && Array.isArray(pl.txs)) {
                             for (const tx of pl.txs) {
-                                if (!tx || !tx.id || executed.has(tx.id)) continue;
+                                if (!tx || !tx.id || executed.has(tx.id) || tx.type === 'LOTTERY_CREATE') continue;
                                 const amount = parseFloat(tx.amount) || 0;
                                 if (amount <= 0) continue;
                                 if (tx.type !== 'COINBASE' && tx.from) {
@@ -470,7 +523,8 @@ export default {
                                     if (currentFromBal < amount) continue; 
                                     newBalances[tx.from] = currentFromBal - amount;
                                 }
-                                if (tx.to) newBalances[tx.to] = (newBalances[tx.to] || 0) + amount;
+                                let toAddr = tx.type === 'LOTTERY_BET' ? '0x0000000000000000000000000000000000000000' : tx.to;
+                                if (toAddr) newBalances[toAddr] = (newBalances[toAddr] || 0) + amount;
                                 executed.add(tx.id);
                             }
                         }
@@ -539,12 +593,12 @@ export default {
                 for (const p of syncData.peers) {
                     if (p.domain !== host) {
                         peerStmts.push(env.DB.prepare(`
-                            INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, last_seen, wallet_address) 
-                            VALUES (?, ?, ?, ?, ?, ?) 
+                            INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, total_power, last_seen, wallet_address) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?) 
                             ON CONFLICT(domain) DO UPDATE SET 
                             last_seen=MAX(last_seen, excluded.last_seen),
                             wallet_address=CASE WHEN excluded.wallet_address != '' THEN excluded.wallet_address ELSE wallet_address END
-                        `).bind(p.domain, p.is_beacon || 'false', parseInt(p.vps_count)||0, parseFloat(p.total_asset)||0, p.last_seen || Date.now(), p.wallet_address || ''));
+                        `).bind(p.domain, p.is_beacon || 'false', parseInt(p.vps_count)||0, parseFloat(p.total_asset)||0, parseFloat(p.total_power)||0, p.last_seen || Date.now(), p.wallet_address || ''));
                     }
                 }
                 if (peerStmts.length > 0) ctx.waitUntil(executeBatchWithRetry(peerStmts));
@@ -563,7 +617,6 @@ export default {
             let blocksToApply = [];
 
             for (const b of syncData.blocks) {
-                // 🚀 V16 统一哈希顺序修复
                 const expectedHash = await miniHash(`${PROTOCOL_VERSION}-${b.slot_id}-${b.parent_hash || ''}-${b.proposer_domain}-${b.payload}`);
                 if (expectedHash !== b.block_hash) {
                     return false; 
@@ -588,19 +641,21 @@ export default {
                     try {
                         const pl = JSON.parse(b.payload);
                         const safeTotalAsset = Math.min(parseFloat(pl.total_asset)||0, 500000);
+                        const safeTotalPower = Math.min(parseFloat(pl.total_power)||0, 5000000);
                         let proposerWallet = '';
                         const cbTx = (pl.txs || []).find(t => t.type === 'COINBASE');
                         if (cbTx && cbTx.to) proposerWallet = cbTx.to;
 
                         allStmts.push(env.DB.prepare(`
-                            INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, last_seen, wallet_address) 
-                            VALUES (?, 'true', ?, ?, ?, ?) 
+                            INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, total_power, last_seen, wallet_address) 
+                            VALUES (?, 'true', ?, ?, ?, ?, ?) 
                             ON CONFLICT(domain) DO UPDATE SET 
                                 is_beacon='true', vps_count=CASE WHEN excluded.last_seen > last_seen THEN excluded.vps_count ELSE vps_count END, 
                                 total_asset=CASE WHEN excluded.last_seen > last_seen THEN excluded.total_asset ELSE total_asset END, 
+                                total_power=CASE WHEN excluded.last_seen > last_seen THEN excluded.total_power ELSE total_power END,
                                 last_seen=MAX(last_seen, excluded.last_seen),
                                 wallet_address=CASE WHEN excluded.wallet_address != '' THEN excluded.wallet_address ELSE wallet_address END
-                        `).bind(b.proposer_domain, parseInt(pl.vps_count)||0, safeTotalAsset, b.timestamp || getNetworkTime(), proposerWallet));
+                        `).bind(b.proposer_domain, parseInt(pl.vps_count)||0, safeTotalAsset, safeTotalPower, b.timestamp || getNetworkTime(), proposerWallet));
                     } catch(e){}
                 }
 
@@ -653,10 +708,10 @@ export default {
                 if (data.domain) {
                     const isBeaconStr = data.is_beacon ? 'true' : 'false';
                     await env.DB.prepare(`
-                        INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, last_seen, reputation_score) 
-                        VALUES (?, ?, ?, ?, ?, 100) 
-                        ON CONFLICT(domain) DO UPDATE SET is_beacon=excluded.is_beacon, vps_count=excluded.vps_count, total_asset=excluded.total_asset, last_seen=excluded.last_seen
-                    `).bind(data.domain, isBeaconStr, parseInt(data.vps_count)||0, parseFloat(data.total_asset)||0, Date.now()).run();
+                        INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, total_power, last_seen, reputation_score) 
+                        VALUES (?, ?, ?, ?, ?, ?, 100) 
+                        ON CONFLICT(domain) DO UPDATE SET is_beacon=excluded.is_beacon, vps_count=excluded.vps_count, total_asset=excluded.total_asset, total_power=excluded.total_power, last_seen=excluded.last_seen
+                    `).bind(data.domain, isBeaconStr, parseInt(data.vps_count)||0, parseFloat(data.total_asset)||0, parseFloat(data.total_power)||0, Date.now()).run();
                 }
                 return consensusResponse({ status: 'ok' });
             } catch(e) { return consensusResponse('Error', 400); }
@@ -696,12 +751,11 @@ export default {
                 const currentSlot = Math.max(1, Math.floor((getNetworkTime() - EPOCH_START) / SLOT_TIME));
                 if (parseInt(block.slot_id) > currentSlot + 3) return consensusResponse('Block from future rejected', 400);
 
-                // 🚀 V16 统一签名与哈希顺序修复
                 const expectedSig = await miniHash(`${PROTOCOL_VERSION}-${block.slot_id}-${block.proposer_domain}-${block.payload}`);
-                if (block.signature !== expectedSig) return consensusResponse('Invalid Signature (Protocol Mismatch)', 403);
+                if (block.signature !== expectedSig) return consensusResponse('Invalid Signature', 403);
                 
                 const expectedHash = await miniHash(`${PROTOCOL_VERSION}-${block.slot_id}-${block.parent_hash}-${block.proposer_domain}-${block.payload}`);
-                if (expectedHash !== block.block_hash) return consensusResponse('Invalid Hash Chain (Protocol Mismatch)', 400);
+                if (expectedHash !== block.block_hash) return consensusResponse('Invalid Hash Chain', 400);
 
                 const pl = JSON.parse(block.payload);
                 let evalResult = { validTxs: [], stateDiff: new Map() };
@@ -746,6 +800,7 @@ export default {
                 }
 
                 const safeTotalAsset = Math.min(parseFloat(pl.total_asset)||0, 500000); 
+                const safeTotalPower = Math.min(parseFloat(pl.total_power)||0, 5000000); 
 
                 let proposerWallet = '';
                 const cbTx = (pl.txs || []).find(t => t.type === 'COINBASE');
@@ -755,15 +810,16 @@ export default {
                 allStmts.push(env.DB.prepare(`INSERT OR IGNORE INTO blockchain_ledger (slot_id, proposer_domain, block_hash, parent_hash, payload, timestamp, total_difficulty, status) VALUES (?, ?, ?, ?, ?, ?, ?, 1)`).bind(block.slot_id, block.proposer_domain, block.block_hash, block.parent_hash, block.payload, block.timestamp || getNetworkTime(), blockDifficulty));
                 
                 allStmts.push(env.DB.prepare(`
-                    INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, last_seen, wallet_address) 
-                    VALUES (?, 'true', ?, ?, ?, ?) 
+                    INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, total_power, last_seen, wallet_address) 
+                    VALUES (?, 'true', ?, ?, ?, ?, ?) 
                     ON CONFLICT(domain) DO UPDATE SET 
                         is_beacon='true', 
                         vps_count=excluded.vps_count, 
                         total_asset=excluded.total_asset, 
+                        total_power=excluded.total_power, 
                         last_seen=MAX(last_seen, excluded.last_seen),
                         wallet_address=CASE WHEN excluded.wallet_address != '' THEN excluded.wallet_address ELSE wallet_address END
-                `).bind(block.proposer_domain, parseInt(pl.vps_count)||0, safeTotalAsset, Date.now(), proposerWallet));
+                `).bind(block.proposer_domain, parseInt(pl.vps_count)||0, safeTotalAsset, safeTotalPower, Date.now(), proposerWallet));
                 
                 if (pl.txs && pl.txs.length > 0) allStmts.push(...getTxsStateStmts(pl.txs, evalResult.stateDiff));
 
@@ -802,25 +858,28 @@ export default {
             try {
                 const data = await request.json();
                 const tx = data.tx || data; 
-                if (!tx || !tx.from || !tx.to || !tx.amount || tx.amount <= 0) throw new Error("Invalid Tx Payload");
+                // LOTTERY_CREATE 允许金额为0
+                if (!tx || !tx.from || (tx.amount < 0 && tx.type !== 'LOTTERY_CREATE')) throw new Error("Invalid Tx Payload");
+                
+                if (tx.amount > 0 && tx.type !== 'LOTTERY_CREATE') {
+                    const wallet = await env.DB.prepare('SELECT balance FROM blockchain_wallets WHERE address = ?').bind(tx.from).first();
+                    if (!wallet || wallet.balance < tx.amount) throw new Error("MJJ积分余额不足");
+                }
 
-                const wallet = await env.DB.prepare('SELECT balance FROM blockchain_wallets WHERE address = ?').bind(tx.from).first();
-                if (!wallet || wallet.balance < tx.amount) throw new Error("Insufficient balance");
+                await env.DB.prepare(`INSERT OR IGNORE INTO mempool (tx_id, payload, timestamp) VALUES (?, ?, ?)`).bind(tx.id, JSON.stringify(tx), tx.timestamp || getNetworkTime()).run();
 
-                await env.DB.prepare(`INSERT OR IGNORE INTO mempool (tx_id, payload, timestamp) VALUES (?, ?, ?)`).bind(tx.id, JSON.stringify(tx), tx.timestamp).run();
-
-                return consensusResponse('Tx Accepted', 202);
+                return consensusResponse('Tx Accepted into Mempool', 202);
             } catch(e) { return consensusResponse('Tx Reject: ' + e.message, 400); }
         }
     }
 
-    const mineAndGossip = async (localAsset, localVpsCount) => {
+    const mineAndGossip = async (localAsset, localPower, localVpsCount) => {
         try {
             await env.DB.prepare(`
-                INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, last_seen, reputation_score, wallet_address)
-                VALUES (?, ?, ?, ?, ?, 9999, ?)
-                ON CONFLICT(domain) DO UPDATE SET is_beacon=excluded.is_beacon, vps_count=excluded.vps_count, total_asset=excluded.total_asset, last_seen=MAX(last_seen, excluded.last_seen), wallet_address=CASE WHEN excluded.wallet_address != '' THEN excluded.wallet_address ELSE wallet_address END
-            `).bind(host, sys.is_beacon === 'true' ? 'true' : 'false', localVpsCount, Math.max(0, localAsset), Date.now(), sys.miner_wallet || '').run().catch(()=>{});
+                INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, total_power, last_seen, reputation_score, wallet_address)
+                VALUES (?, ?, ?, ?, ?, ?, 9999, ?)
+                ON CONFLICT(domain) DO UPDATE SET is_beacon=excluded.is_beacon, vps_count=excluded.vps_count, total_asset=excluded.total_asset, total_power=excluded.total_power, last_seen=MAX(last_seen, excluded.last_seen), wallet_address=CASE WHEN excluded.wallet_address != '' THEN excluded.wallet_address ELSE wallet_address END
+            `).bind(host, sys.is_beacon === 'true' ? 'true' : 'false', localVpsCount, Math.max(0, localAsset), Math.max(0, localPower), Date.now(), sys.miner_wallet || '').run().catch(()=>{});
 
             if (Math.random() < 0.2) await updateNetworkTimeOffset();
 
@@ -884,7 +943,7 @@ export default {
                         const target = syncTargets[Math.floor(Math.random() * syncTargets.length)];
                         fetchWithTimeSync(`${target}/api/consensus/register`, {
                             method: 'POST', headers: {'Content-Type':'application/json'},
-                            body: JSON.stringify({ domain: host, is_beacon: sys.is_beacon === 'true' ? 'true' : 'false', vps_count: localVpsCount, total_asset: localAsset })
+                            body: JSON.stringify({ domain: host, is_beacon: sys.is_beacon === 'true' ? 'true' : 'false', vps_count: localVpsCount, total_asset: localAsset, total_power: localPower })
                         }, target).catch(()=>{});
                     }
                 }
@@ -899,9 +958,9 @@ export default {
             const localPrevBlock = await env.DB.prepare('SELECT block_hash, total_difficulty FROM blockchain_ledger WHERE status = 1 ORDER BY slot_id DESC LIMIT 1').first();
             const parentHash = localPrevBlock ? localPrevBlock.block_hash : '0000000000000000000000000000000000000000';
             const parentDifficulty = localPrevBlock ? (localPrevBlock.total_difficulty || 0) : 0;
-            const proposerAsset = Math.max(1, Math.floor(localAsset));
+            const proposerPower = Math.max(1, Math.floor(localPower)); // 🚀 V18 物理算力作难度基数
             
-            let currentDifficulty = parentDifficulty + proposerAsset;
+            let currentDifficulty = parentDifficulty + proposerPower;
             if (isRescueMint) currentDifficulty += 100; 
 
             const { results: pendingTxs } = await env.DB.prepare('SELECT payload FROM mempool ORDER BY timestamp ASC, tx_id ASC LIMIT 20').all();
@@ -910,11 +969,14 @@ export default {
 
             if (sys.miner_wallet) {
                 const coinbaseId = 'cb-' + currentSlot + '-' + await miniHash(host);
-                blockTxs.push({ id: coinbaseId, type: 'COINBASE', to: sys.miner_wallet, amount: 1, timestamp: currentNetTime });
+                const currentReward = getCoinbaseReward(currentSlot); // 🚀 触发减半函数
+                if (currentReward > 0) {
+                    blockTxs.push({ id: coinbaseId, type: 'COINBASE', to: sys.miner_wallet, amount: currentReward, timestamp: currentNetTime });
+                }
             }
 
             const activeThreshold = Date.now() - 86400000;
-            const { results: topPeers } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') AND last_seen > ? ORDER BY total_asset DESC, last_seen DESC LIMIT 500`).bind(activeThreshold).all();
+            const { results: topPeers } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') AND last_seen > ? ORDER BY total_power DESC, last_seen DESC LIMIT 500`).bind(activeThreshold).all();
             let active_nodes = topPeers.map(p => p.domain);
             if (!active_nodes.includes(host)) active_nodes.push(host);
             if (!active_nodes.includes(GENESIS_NODE)) active_nodes.push(GENESIS_NODE);
@@ -922,9 +984,8 @@ export default {
 
             const evalResult = await evaluateTxs(blockTxs);
             const state_root = evalResult.state_root;
-            const payloadStr = JSON.stringify({ vps_count: localVpsCount, total_asset: localAsset, txs: blockTxs, state_root, active_nodes });
+            const payloadStr = JSON.stringify({ vps_count: localVpsCount, total_asset: localAsset, total_power: localPower, txs: blockTxs, state_root, active_nodes });
             
-            // 🚀 V16 统一哈希顺序修复
             const hash = await miniHash(`${PROTOCOL_VERSION}-${currentSlot}-${parentHash}-${host}-${payloadStr}`);
             const signature = await miniHash(`${PROTOCOL_VERSION}-${currentSlot}-${host}-${payloadStr}`);
 
@@ -996,7 +1057,7 @@ export default {
             <span style="margin-right: 15px;">👁️ 历史总访问：<b style="color: #3b82f6;">${sys.visits_total || 0}</b> 次</span>
             <span>🔥 今日访问：<b style="color: #10b981;">${sys.visits_today || 0}</b> 次</span>
         </div>
-        Powered by <a href="https://github.com/a63414262/CF-Server-Monitor-Pro" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">CF-Server-Monitor-Pro</a> | 
+        Powered by <a href="https://github.com/a63414262/CF-Server-Monitor-Pro" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">CF-Server-Monitor-Pro (V18.MJJ)</a> | 
         <a href="https://www.youtube.com/@%E7%A7%91%E6%8A%80KKK" target="_blank" style="color: #ef4444; text-decoration: none; font-weight: 600;">▶️ 小K分享频道</a>
       </div>
     `;
@@ -1168,7 +1229,7 @@ export default {
           if (amountNum <= 0) throw new Error("Invalid amount");
           
           const wallet = await env.DB.prepare('SELECT balance FROM blockchain_wallets WHERE address = ?').bind(data.from).first();
-          if (!wallet || wallet.balance < amountNum) throw new Error("余额不足 (Insufficient balance)");
+          if (!wallet || wallet.balance < amountNum) throw new Error("MJJ余额不足 (Insufficient balance)");
 
           const txData = { id: crypto.randomUUID(), type: 'TRANSFER', from: data.from, to: data.to, amount: amountNum, timestamp: getNetworkTime() };
           
@@ -1310,24 +1371,24 @@ export default {
       </head>
       <body>
         <div class="card">
-          <h2>🛠️ 全局设置与 Web3 共识网络</h2>
+          <h2>🛠️ 全局设置与 Web3 共识网络 (V18.MJJ)</h2>
           
           <div style="background:#e0f2fe; padding:15px; border-radius:8px; border:1px solid #bae6fd; margin-bottom:20px;">
             <label style="font-size: 16px; font-weight: bold; color: #0369a1; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="cfg_is_beacon" style="width:20px;height:20px;" ${sys.is_beacon === 'true' ? 'checked' : ''}>
-                🚀 加入去中心化共识网络 (成为信标权重节点)
+                🚀 加入去中心化共识网络 (成为物理算力信标节点)
             </label>
-            <p style="font-size:13px; color:#0c4a6e; margin-top:8px;">系统已默认强制开启。您的面板将无缝对接全球探针网络，共同维护区块链账本的不可篡改性。</p>
+            <p style="font-size:13px; color:#0c4a6e; margin-top:8px;">V18 后系统采用物理探针质押。系统强制提取内核硬件数据作为您的挖矿算力池。请务必保持节点稳定长期的在线率以获取挖矿阶梯加成。</p>
           </div>
           
           <div style="background:#f3e8ff; padding:15px; border-radius:8px; border:1px solid #e9d5ff; margin-bottom:20px;">
-            <h3 style="margin-top:0; color:#6b21a8;">💼 Web3 钱包与转账 (Cycle Ledger)</h3>
+            <h3 style="margin-top:0; color:#6b21a8;">💼 Web3 钱包与转账 (MJJ Ledger)</h3>
             <div class="form-group">
-                <label>本站出块奖励收款钱包地址 (自动挖矿 Cycle，请填写 0x... EVM格式地址)</label>
+                <label>本站出块奖励收款钱包地址 (自动挖矿 MJJ，请填写 0x... EVM格式地址)</label>
                 <input type="text" id="cfg_miner_wallet" value="${sys.miner_wallet || ''}" placeholder="例如 0x123...abc">
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:16px; font-weight:bold; color:#7e22ce;">当前余额: <span id="admin-wallet-balance">${walletBalance}</span> Cycle</span>
+                <span style="font-size:16px; font-weight:bold; color:#7e22ce;">当前余额: <span id="admin-wallet-balance">${walletBalance}</span> MJJ</span>
                 <div>
                   <button onclick="openTxModal()" class="btn btn-purple">发起转账 (Tx)</button>
                 </div>
@@ -1385,7 +1446,6 @@ export default {
                    <button class="btn btn-gray" onclick="document.getElementById('bg_file').click()">📁 本地上传</button>
                 </div>
                 <img id="bg_preview" src="${sys.custom_bg || ''}" style="max-height: 120px; margin-top: 10px; border-radius: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); display: ${sys.custom_bg ? 'block' : 'none'}; object-fit: cover;">
-                <span style="font-size:12px; color:#888; margin-top:5px;">* 建议使用 500KB 以下的图片。清除输入框并保存即可恢复纯色主题。</span>
               </div>
               <div class="form-group">
                 <label>前台看板标题</label>
@@ -1414,7 +1474,7 @@ export default {
               </div>
               <div class="checkbox-group">
                 <input type="checkbox" id="cfg_show_price" ${sys.show_price === 'true' ? 'checked' : ''}>
-                <label for="cfg_show_price">在前台显示 <b>价格</b></label>
+                <label for="cfg_show_price">在前台显示 <b>价格</b> (仅做 UI 显示)</label>
               </div>
               <div class="checkbox-group">
                 <input type="checkbox" id="cfg_show_expire" ${sys.show_expire === 'true' ? 'checked' : ''}>
@@ -1432,7 +1492,7 @@ export default {
               <hr style="margin: 15px 0; border: none; border-top: 1px dashed #ccc;">
               <div class="checkbox-group">
                 <input type="checkbox" id="cfg_show_asset" ${sys.show_asset === 'true' ? 'checked' : ''}>
-                <label for="cfg_show_asset">在前台和卡片显示 <b>数字资产价值</b></label>
+                <label for="cfg_show_asset">在前台和卡片显示 <b>数字资产价值</b> (仅作参考, 不参与算力计算)</label>
               </div>
               <div class="form-group" style="margin-left: 28px; margin-top: -5px; margin-bottom: 5px;">
                 <label style="font-size: 12px;">资产货币展示单位</label>
@@ -1458,7 +1518,7 @@ export default {
               </div>
 
               <hr style="margin: 20px 0; border: none; border-top: 1px dashed #ccc;">
-              <label style="font-size: 14px; font-weight: 600; margin-bottom: 10px; display: block; color: #8b5cf6;">📡 三网延迟测试节点选择</label>
+              <label style="font-size: 14px; font-weight: 600; margin-bottom: 10px; display: block; color: #8b5cf6;">📡 三网延迟测速节点 (⚠️ V18 若超时将物理扣除算力权重)</label>
               <div class="form-group">
                 <label>电信 (CT) 测速节点</label>
                 <select id="cfg_ping_node_ct">${buildOpts(pingOpts.ct, sys.ping_node_ct)}</select>
@@ -1470,7 +1530,7 @@ export default {
               <div class="form-group">
                 <label>移动 (CM) 测速节点</label>
                 <select id="cfg_ping_node_cm">${buildOpts(pingOpts.cm, sys.ping_node_cm)}</select>
-                <span style="font-size:12px; color:#ef4444; margin-top:5px; display:block; font-weight:bold;">* 注意：如果 VPS 的 IPv4 被墙（或网络不通），三网延迟会直接超时，显示为 2000ms。</span>
+                <span style="font-size:12px; color:#ef4444; margin-top:5px; display:block; font-weight:bold;">* 注意：如果 VPS 的网络不通导致任何一网超时，算力权重将直接打1折！</span>
               </div>
             </div>
           </div>
@@ -1496,13 +1556,13 @@ export default {
 
         <div id="txModal" class="modal">
           <div class="modal-content">
-            <h3 style="margin-top:0; color:#7e22ce;">💸 发起 Cycle 转账</h3>
+            <h3 style="margin-top:0; color:#7e22ce;">💸 发起 MJJ 转账</h3>
             <label>发送方地址 (From)</label> 
             <input type="text" id="txFrom" value="${sys.miner_wallet || ''}">
             <label>接收方地址 (To)</label> 
             <input type="text" id="txTo" placeholder="输入接收方地址 (如 0x...)">
-            <label>转账数量 (Amount Cycle)</label> 
-            <input type="number" id="txAmount" placeholder="输入 Cycle 数量" min="0.1" step="0.1">
+            <label>转账数量 (Amount MJJ)</label> 
+            <input type="number" id="txAmount" placeholder="输入 MJJ 数量" min="0.1" step="0.1">
             <div style="text-align: right; margin-top: 15px;">
               <button onclick="closeTxModal()" style="padding: 8px 15px; border: 1px solid #ccc; background: white; margin-right: 5px; cursor:pointer;">取消</button>
               <button onclick="sendTx()" class="btn btn-purple" style="padding: 8px 15px;">广播交易</button>
@@ -1526,7 +1586,7 @@ export default {
               <option value="alpine">Alpine Linux (OpenRC/Ash)</option>
             </select>
             <label>分组名称</label> <input type="text" id="editGroup" placeholder="如：美国 VPS">
-            <label>价格</label> <input type="text" id="editPrice" placeholder="如：10USD/Year 或 免费">
+            <label>价格 (V18起仅用于界面展示)</label> <input type="text" id="editPrice" placeholder="如：10USD/Year 或 免费">
             <label>到期时间</label> <input type="date" id="editExpire">
             <label>带宽 (前端徽章)</label> <input type="text" id="editBandwidth" placeholder="如：1Gbps 或 200Mbps">
             <label>流量总量 (前端徽章)</label> <input type="text" id="editTraffic" placeholder="如：1TB/月">
@@ -1559,9 +1619,7 @@ export default {
           function uploadBg(input) {
             const file = input.files[0];
             if(!file) return;
-            if(file.size > 800 * 1024) {
-              alert('图片有点大，为保证大盘秒开加载，建议使用 500KB 以下的图片或直接填写图片外部URL！');
-            }
+            if(file.size > 800 * 1024) { alert('图片有点大，建议使用 500KB 以下的图片'); }
             const reader = new FileReader();
             reader.onload = function(e) {
               document.getElementById('cfg_custom_bg').value = e.target.result;
@@ -1605,7 +1663,6 @@ export default {
             if (res.ok) { alert('✅ 设置已保存！'); location.reload(); } else alert('保存失败');
           }
 
-          // 新增：加载自定义主题
           function loadCustomTheme() {
               const select = document.getElementById('saved_themes_select');
               const selected = select.options[select.selectedIndex];
@@ -1618,7 +1675,6 @@ export default {
               }
           }
 
-          // 新增：保存当前 CSS 为新主题
           async function saveCustomTheme() {
               const name = document.getElementById('new_theme_name').value.trim();
               const css = document.getElementById('cfg_custom_css').value.trim();
@@ -1638,7 +1694,6 @@ export default {
               }
           }
 
-          // 新增：删除自定义主题
           async function deleteCustomTheme() {
               const select = document.getElementById('saved_themes_select');
               const id = select.value;
@@ -1737,7 +1792,7 @@ export default {
     }
 
     // ==========================================
-    // 一键安装脚本 (/install.sh)
+    // 一键安装脚本 (/install.sh) (🚀 V18 增加硬指标提取)
     // ==========================================
     if (request.method === 'GET' && url.pathname === '/install.sh') {
       let reportInterval = '5';
@@ -1767,7 +1822,7 @@ WORKER_URL="${host}/update"
 STATIC_URL="${CACHE_CONFIG_URL}"
 
 if [ -z "$SERVER_ID" ] || [ -z "$SECRET" ]; then echo "错误: 缺少参数。"; exit 1; fi
-echo "开始安装强力脱钩・秒级热重载探针 Agent..."
+echo "开始安装强力脱钩・秒级热重载探针 Agent (V18.MJJ)..."
 
 # 清理旧环境
 `;
@@ -1858,6 +1913,9 @@ while true; do
   BOOT_TIME=\\$(uptime -s 2>/dev/null || echo "Unknown")
   CPU_INFO=\\$(grep -m 1 'model name' /proc/cpuinfo | awk -F: '{print \\$2}' | xargs | tr -d '"')
   
+  # V18 物理算力核心指标抓取
+  CPU_CORES=\\$(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 1)
+  
   VIRT="Unknown"
   command -v systemd-detect-virt >/dev/null 2>&1 && VIRT=\\$(systemd-detect-virt 2>/dev/null)
 
@@ -1911,7 +1969,7 @@ while true; do
   if [ "\\$IPV4" != "\\$PREV_V4_STATE" ] || [ "\\$IPV6" != "\\$PREV_V6_STATE" ]; then NEED_REPORT=1; fi
 
   if [ \\$NEED_REPORT -eq 1 ]; then
-    PAYLOAD="{\\"id\\": \\"\\$SERVER_ID\\", \\"secret\\": \\"\\$SECRET\\", \\"metrics\\": { \\"cpu\\": \\"\\$CPU\\", \\"ram\\": \\"\\$RAM\\", \\"ram_total\\": \\"\\$RAM_TOTAL\\", \\"ram_used\\": \\"\\$RAM_USED\\", \\"swap_total\\": \\"\\$SWAP_TOTAL\\", \\"swap_used\\": \\"\\$SWAP_USED\\", \\"disk\\": \\"\\$DISK\\", \\"disk_total\\": \\"\\$DISK_TOTAL\\", \\"disk_used\\": \\"\\$DISK_USED\\", \\"load\\": \\"\\$LOAD\\", \\"uptime\\": \\"\\$UPTIME\\", \\"boot_time\\": \\"\\$BOOT_TIME\\", \\"net_rx\\": \\"\\$RX_NOW\\", \\"net_tx\\": \\"\\$TX_NOW\\", \\"net_in_speed\\": \\"\\$RX_SPEED\\", \\"net_out_speed\\": \\"\\$TX_SPEED\\", \\"os\\": \\"\\$OS\\", \\"arch\\": \\"\\$ARCH\\", \\"cpu_info\\": \\"\\$CPU_INFO\\", \\"processes\\": \\"\\$PROCESSES\\", \\"tcp_conn\\": \\"\\$TCP_CONN\\", \\"udp_conn\\": \\"\\$UDP_CONN\\", \\"ip_v4\\": \\"\\$IPV4\\", \\"ip_v6\\": \\"\\$IPV6\\", \\"ping_ct\\": \\"\\$PING_CT\\", \\"ping_cu\\": \\"\\$PING_CU\\", \\"ping_cm\\": \\"\\$PING_CM\\", \\"ping_bd\\": \\"\\$PING_BD\\", \\"virt\\": \\"\\$VIRT\\" }}"
+    PAYLOAD="{\\"id\\": \\"\\$SERVER_ID\\", \\"secret\\": \\"\\$SECRET\\", \\"metrics\\": { \\"cpu\\": \\"\\$CPU\\", \\"ram\\": \\"\\$RAM\\", \\"ram_total\\": \\"\\$RAM_TOTAL\\", \\"ram_used\\": \\"\\$RAM_USED\\", \\"swap_total\\": \\"\\$SWAP_TOTAL\\", \\"swap_used\\": \\"\\$SWAP_USED\\", \\"disk\\": \\"\\$DISK\\", \\"disk_total\\": \\"\\$DISK_TOTAL\\", \\"disk_used\\": \\"\\$DISK_USED\\", \\"load\\": \\"\\$LOAD\\", \\"uptime\\": \\"\\$UPTIME\\", \\"boot_time\\": \\"\\$BOOT_TIME\\", \\"net_rx\\": \\"\\$RX_NOW\\", \\"net_tx\\": \\"\\$TX_NOW\\", \\"net_in_speed\\": \\"\\$RX_SPEED\\", \\"net_out_speed\\": \\"\\$TX_SPEED\\", \\"os\\": \\"\\$OS\\", \\"arch\\": \\"\\$ARCH\\", \\"cpu_info\\": \\"\\$CPU_INFO\\", \\"cpu_cores\\": \\"\\$CPU_CORES\\", \\"processes\\": \\"\\$PROCESSES\\", \\"tcp_conn\\": \\"\\$TCP_CONN\\", \\"udp_conn\\": \\"\\$UDP_CONN\\", \\"ip_v4\\": \\"\\$IPV4\\", \\"ip_v6\\": \\"\\$IPV6\\", \\"ping_ct\\": \\"\\$PING_CT\\", \\"ping_cu\\": \\"\\$PING_CU\\", \\"ping_cm\\": \\"\\$PING_CM\\", \\"ping_bd\\": \\"\\$PING_BD\\", \\"virt\\": \\"\\$VIRT\\" }}"
     
     ${cmdApp} -s -X POST -H "Content-Type: application/json" -d "\\$PAYLOAD" "\\$WORKER_URL" > /dev/null 2>&1
     
@@ -2055,7 +2113,7 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
               os = ?, cpu_info = ?, arch = ?, boot_time = ?, ram_used = ?, swap_total = ?, 
               swap_used = ?, disk_total = ?, disk_used = ?, processes = ?, tcp_conn = ?, udp_conn = ?, 
               country = ?, ip_v4 = ?, ip_v6 = ?, ping_ct = ?, ping_cu = ?, ping_cm = ?, ping_bd = ?,
-              monthly_rx = ?, monthly_tx = ?, last_rx = ?, last_tx = ?, reset_month = ?, history = ?, virt = ?
+              monthly_rx = ?, monthly_tx = ?, last_rx = ?, last_tx = ?, reset_month = ?, history = ?, virt = ?, cpu_cores = ?
           WHERE id = ?
         `).bind(
           metrics.cpu, metrics.ram, metrics.disk, metrics.load, metrics.uptime, Date.now(),
@@ -2067,7 +2125,7 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
           metrics.tcp_conn || '0', metrics.udp_conn || '0', countryCode, 
           metrics.ip_v4 || '0', metrics.ip_v6 || '0', 
           metrics.ping_ct || '0', metrics.ping_cu || '0', metrics.ping_cm || '0', metrics.ping_bd || '0', 
-          monthly_rx.toString(), monthly_tx.toString(), last_rx.toString(), last_tx.toString(), reset_month, historyStr, metrics.virt || '',
+          monthly_rx.toString(), monthly_tx.toString(), last_rx.toString(), last_tx.toString(), reset_month, historyStr, metrics.virt || '', metrics.cpu_cores || '1',
           id
         ).run();
 
@@ -2077,20 +2135,21 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
             ctx.waitUntil(checkOfflineNodes());
         }
         
-        // 🚀 Optimization: Throttle mineAndGossip to once per 5 seconds globally to drastically save Workers CPU/D1
         if (!globalThis.lastMineAndGossipTime || nowMsForThrottle - globalThis.lastMineAndGossipTime > 5000) {
             globalThis.lastMineAndGossipTime = nowMsForThrottle;
             ctx.waitUntil((async () => {
                 try {
-                    const { results: allS } = await env.DB.prepare('SELECT price, expire_date FROM servers WHERE is_hidden="false"').all();
-                    let currentAsset = 0;
+                    const { results: allS } = await env.DB.prepare('SELECT price, expire_date, cpu_cores, ram_total, ping_ct, ping_cu, ping_cm, boot_time, last_updated FROM servers WHERE is_hidden="false"').all();
+                    let currentAsset = 0; let currentPower = 0;
                     for(const s of allS) {
-                        const ast = calcServerAsset(s, nowMsForThrottle).amount;
-                        currentAsset += (ast || 0); 
+                        currentAsset += (calcServerAsset(s, nowMsForThrottle).amount || 0); 
+                        const isOnline = (nowMsForThrottle - s.last_updated) < OFFLINE_THRESHOLD;
+                        if (isOnline) currentPower += calcServerPower(s, nowMsForThrottle);
                     }
                     currentAsset = Math.min(currentAsset, 100000000); 
+                    currentPower = Math.min(currentPower, 100000000); 
 
-                    await mineAndGossip(currentAsset, allS.length); 
+                    await mineAndGossip(currentAsset, currentPower, allS.length); 
                 } catch(e) {}
             })());
         }
@@ -2109,22 +2168,20 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
     }
 
     // ==========================================
-    // 前台探针首页 & 详情页
+    // 前台探针首页 & 详情页 (🚀 V18 完美还原版)
     // ==========================================
     if (request.method === 'GET' && url.pathname === '/') {
       if (sys.is_public !== 'true' && !checkAuth(request)) return authResponse(sys.site_title);
 
       const isAjax = url.searchParams.get('ajax') === '1';
-      
-      // 🚀 Optimization: Super Fast V8 Memory Caching for AJAX responses
-      const nowSec = Math.floor(Date.now() / 5000); // 5-second dynamic bucket
+      const nowSec = Math.floor(Date.now() / 5000);
       if (isAjax && globalThis.ajaxCacheSec === nowSec && globalThis.ajaxCacheData) {
           return new Response(globalThis.ajaxCacheData, { headers: { 'Content-Type': 'text/html' } });
       }
       
-      const nowTime = new Date();
+      const now = Date.now();
       const tzOffset = 8 * 60 * 60000; 
-      const localNow = new Date(nowTime.getTime() + tzOffset);
+      const localNow = new Date(now + tzOffset);
       const todayStr = `${localNow.getFullYear()}-${localNow.getMonth() + 1}-${localNow.getDate()}`;
         
       if (!isAjax) {
@@ -2139,22 +2196,58 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
         ctx.waitUntil(env.DB.prepare(`INSERT INTO settings (key, value) VALUES ('visits_total', ?), ('visits_today', ?), ('visits_date', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(vTotal.toString(), vToday.toString(), todayStr).run().catch(()=>{}));
       }
       
-      let currentAssetUpdate = 0;
-      let { results: allS } = await env.DB.prepare('SELECT price, expire_date FROM servers WHERE is_hidden="false"').all();
-      for(const s of allS) { currentAssetUpdate += (calcServerAsset(s, Date.now()).amount || 0); }
-      currentAssetUpdate = Math.min(currentAssetUpdate, 100000000);
+      let currentAssetUpdate = 0; let currentPowerUpdate = 0;
+      let globalOnline = 0; let globalOffline = 0; let globalSpeedIn = 0; let globalSpeedOut = 0; let globalNetTx = 0; let globalNetRx = 0; 
+      const groups = {}; const countryStats = {}; 
+      const getColor = (ping) => { const p = parseInt(ping); if (p === 0 || isNaN(p)) return '#9ca3af'; if (p < 100) return '#10b981'; if (p < 200) return '#f59e0b'; return '#ef4444'; };
+
+      let { results: allS } = await env.DB.prepare('SELECT * FROM servers WHERE is_hidden="false"').all();
+      
+      if (allS && allS.length > 0) {
+        for (const server of allS) {
+          const isOnline = (now - server.last_updated) < OFFLINE_THRESHOLD;
+          if (isOnline) { 
+              globalOnline++; 
+              globalSpeedIn += parseFloat(server.net_in_speed) || 0; 
+              globalSpeedOut += parseFloat(server.net_out_speed) || 0; 
+              currentPowerUpdate += calcServerPower(server, now);
+          } else { globalOffline++; }
+          
+          const rx_val = sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_rx || 0) : parseFloat(server.net_rx || 0);
+          const tx_val = sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_tx || 0) : parseFloat(server.net_tx || 0);
+          globalNetTx += (tx_val || 0); globalNetRx += (rx_val || 0);
+
+          const { amount, remValue } = calcServerAsset(server, now);
+          currentAssetUpdate += (amount || 0); 
+          server._remValue = (remValue || 0); server._amount = (amount || 0);
+          server._power = isOnline ? calcServerPower(server, now) : 0;
+
+          const grpName = server.server_group || '默认分组';
+          if (!groups[grpName]) groups[grpName] = [];
+          groups[grpName].push(server);
+
+          let cCodeMap = (server.country || 'xx').toUpperCase();
+          if (cCodeMap === 'TW') cCodeMap = 'CN';
+          if (cCodeMap !== 'XX') countryStats[cCodeMap] = (countryStats[cCodeMap] || 0) + 1;
+        }
+      }
+
+      currentAssetUpdate = Math.min(currentAssetUpdate, 100000000); currentPowerUpdate = Math.min(currentPowerUpdate, 100000000);
       
       ctx.waitUntil(env.DB.prepare(`
-          INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, last_seen, reputation_score, wallet_address)
-          VALUES (?, ?, ?, ?, ?, 9999, ?)
-          ON CONFLICT(domain) DO UPDATE SET last_seen=MAX(last_seen, excluded.last_seen), vps_count=excluded.vps_count, total_asset=excluded.total_asset, wallet_address=CASE WHEN excluded.wallet_address != '' THEN excluded.wallet_address ELSE wallet_address END
-      `).bind(host, sys.is_beacon === 'true' ? 'true' : 'false', allS.length, currentAssetUpdate, Date.now(), sys.miner_wallet || '').run().catch(()=>{}));
+          INSERT INTO blockchain_peers (domain, is_beacon, vps_count, total_asset, total_power, last_seen, reputation_score, wallet_address)
+          VALUES (?, 'true', ?, ?, ?, ?, 9999, ?)
+          ON CONFLICT(domain) DO UPDATE SET last_seen=MAX(last_seen, excluded.last_seen), vps_count=excluded.vps_count, total_asset=excluded.total_asset, total_power=excluded.total_power, wallet_address=CASE WHEN excluded.wallet_address != '' THEN excluded.wallet_address ELSE wallet_address END
+      `).bind(host, allS.length, currentAssetUpdate, currentPowerUpdate, now, sys.miner_wallet || '').run().catch(()=>{}));
       
       ctx.waitUntil((async () => {
           const seed = DEFAULT_SEEDS[Math.floor(Math.random() * DEFAULT_SEEDS.length)];
           if (seed !== host) await syncAndAlign(seed);
       })());
 
+      // ----------------------------------------
+      // 详情页逻辑 (Chart.js 动态图表 - 100%保留)
+      // ----------------------------------------
       const viewId = url.searchParams.get('id');
       if (viewId) {
         const server = await env.DB.prepare('SELECT * FROM servers WHERE id = ?').bind(viewId).first();
@@ -2204,6 +2297,7 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
                 <div class="info-item"><span class="info-label">系统</span><span class="info-value" id="val-os">...</span></div>
                 <div class="info-item"><span class="info-label">虚拟化</span><span class="info-value" id="val-virt">...</span></div>
                 <div class="info-item"><span class="info-label">CPU</span><span class="info-value" id="val-cpuinfo">...</span></div>
+                <div class="info-item"><span class="info-label">核心数</span><span class="info-value" id="val-cpucores">...</span></div>
                 <div class="info-item"><span class="info-label">Load</span><span class="info-value" id="val-load">...</span></div>
                 <div class="info-item"><span class="info-label">上传 / 下载</span><span class="info-value" id="val-traffic">...</span></div>
                 <div class="info-item"><span class="info-label">启动时间</span><span class="info-value" id="val-boot">...</span></div>
@@ -2239,7 +2333,7 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
                 const res = await fetch('/api/server?id=' + serverId); const data = await res.json();
                 const cCode = (data.country || 'xx').toLowerCase();
                 document.getElementById('head-flag').innerHTML = cCode !== 'xx' ? \`<img src="https://flagcdn.com/24x18/\${cCode}.png" alt="\${cCode}" style="vertical-align: middle; margin-right: 8px; border-radius: 2px;">\` : '🏳️ ';
-                document.getElementById('val-uptime').innerText = data.uptime || 'N/A'; document.getElementById('val-arch').innerText = data.arch || 'N/A'; document.getElementById('val-os').innerText = data.os || 'N/A'; document.getElementById('val-virt').innerText = data.virt || 'N/A'; document.getElementById('val-cpuinfo').innerText = data.cpu_info || 'N/A'; document.getElementById('val-load').innerText = data.load_avg || '0.00'; document.getElementById('val-boot').innerText = data.boot_time || 'N/A'; 
+                document.getElementById('val-uptime').innerText = data.uptime || 'N/A'; document.getElementById('val-arch').innerText = data.arch || 'N/A'; document.getElementById('val-os').innerText = data.os || 'N/A'; document.getElementById('val-virt').innerText = data.virt || 'N/A'; document.getElementById('val-cpuinfo').innerText = data.cpu_info || 'N/A'; document.getElementById('val-cpucores').innerText = (data.cpu_cores || '1') + ' Cores'; document.getElementById('val-load').innerText = data.load_avg || '0.00'; document.getElementById('val-boot').innerText = data.boot_time || 'N/A'; 
                 document.getElementById('val-traffic').innerText = formatBytes(data.${txField} || 0) + ' / ' + formatBytes(data.${rxField} || 0);
 
                 const isOnline = (Date.now() - data.last_updated) < ${OFFLINE_THRESHOLD};
@@ -2271,45 +2365,16 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
       }
 
       // ----------------------------------------
-      // 大盘聚合首页
+      // 大盘聚合卡片与数据表
       // ----------------------------------------
-      let { results } = await env.DB.prepare('SELECT * FROM servers').all();
-      results = results.filter(s => s.is_hidden !== 'true');
-      const now = Date.now();
-
-      let globalOnline = 0; let globalOffline = 0; let globalSpeedIn = 0; let globalSpeedOut = 0; let globalNetTx = 0; let globalNetRx = 0; let totalAsset = 0; let remAsset = 0;
-      const groups = {}; const countryStats = {}; 
-      const getColor = (ping) => { const p = parseInt(ping); if (p === 0 || isNaN(p)) return '#9ca3af'; if (p < 100) return '#10b981'; if (p < 200) return '#f59e0b'; return '#ef4444'; };
-
-      if (results && results.length > 0) {
-        for (const server of results) {
-          const isOnline = (now - server.last_updated) < OFFLINE_THRESHOLD;
-          if (isOnline) { globalOnline++; globalSpeedIn += parseFloat(server.net_in_speed) || 0; globalSpeedOut += parseFloat(server.net_out_speed) || 0; } else { globalOffline++; }
-          const rx_val = sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_rx || 0) : parseFloat(server.net_rx || 0);
-          const tx_val = sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_tx || 0) : parseFloat(server.net_tx || 0);
-          globalNetTx += (tx_val || 0); globalNetRx += (rx_val || 0);
-
-          const { amount, remValue } = calcServerAsset(server, now);
-          totalAsset += (amount || 0); remAsset += (remValue || 0); 
-          server._remValue = (remValue || 0); server._amount = (amount || 0);
-
-          const grpName = server.server_group || '默认分组';
-          if (!groups[grpName]) groups[grpName] = [];
-          groups[grpName].push(server);
-
-          let cCodeMap = (server.country || 'xx').toUpperCase();
-          if (cCodeMap === 'TW') cCodeMap = 'CN';
-          if (cCodeMap !== 'XX') countryStats[cCodeMap] = (countryStats[cCodeMap] || 0) + 1;
-        }
-      }
-
-      let localRank = 1; let globalNetAsset = totalAsset; let globalProposer = '--'; let currentHeight = 0; let activeBeacons = 0; let globalNodes = 1; let pendingTxsCount = 0;
+      let localRank = 1; let globalNetPower = currentPowerUpdate; let globalNetAsset = currentAssetUpdate; 
+      let globalProposer = '--'; let currentHeight = 0; let activeBeacons = 0; let globalNodes = 1; let pendingTxsCount = 0;
       let rankTableHtml = '';
       
       try {
-          const activeThreshold = Date.now() - 86400000; 
-          const { results: rankList } = await env.DB.prepare('SELECT domain, vps_count, total_asset, last_seen, wallet_address FROM blockchain_peers WHERE is_beacon IN ("true", "1") AND last_seen > ?').bind(activeThreshold).all();
-          let higherCount = 0; let otherAssets = 0;
+          const activeThreshold = now - 86400000; 
+          const { results: rankList } = await env.DB.prepare('SELECT domain, vps_count, total_asset, total_power, last_seen, wallet_address FROM blockchain_peers WHERE is_beacon IN ("true", "1") AND last_seen > ?').bind(activeThreshold).all();
+          let higherCount = 0; let otherPowers = 0; let otherAssets = 0;
           
           let walletBalances = {};
           try {
@@ -2317,60 +2382,34 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
               wBals.forEach(w => walletBalances[w.address] = w.balance);
           } catch(e) {}
 
-          let sortedPeers = [...rankList];
-          sortedPeers.sort((a, b) => {
-              let aA = Math.min(parseFloat(a.total_asset)||0, 500000);
-              let aB = Math.min(parseFloat(b.total_asset)||0, 500000);
-              if (aB !== aA) return aB - aA;
-              return a.domain > b.domain ? 1 : -1;
-          });
-
+          let sortedPeers = [...rankList].sort((a, b) => Math.min(parseFloat(b.total_power)||0, 5000000) - Math.min(parseFloat(a.total_power)||0, 5000000));
           sortedPeers.forEach((p, idx) => {
-              let pAsset = Math.min(parseFloat(p.total_asset)||0, 500000);
-              let isMe = p.domain === host;
-              let rowStyle = isMe ? 'background: rgba(59, 130, 246, 0.1); font-weight: bold;' : '';
-              let vpsCount = p.vps_count || 0;
+              let pPower = Math.min(parseFloat(p.total_power)||0, 5000000);
+              let isMe = p.domain === host; let rowStyle = isMe ? 'background: rgba(59, 130, 246, 0.1); font-weight: bold;' : '';
               let ls = new Date(p.last_seen + 8*3600000).toISOString().replace('T',' ').substring(5,16); 
-              
-              let dWallet = p.wallet_address;
-              let dCycle = dWallet && walletBalances[dWallet] ? walletBalances[dWallet].toFixed(2) : '0.00';
-              let cycleHtml = dWallet ? `<a href="javascript:void(0)" onclick="searchBalance('${dWallet}'); document.getElementById('rankModal').style.display='none'; switchView('block');" style="color:#8b5cf6;text-decoration:none;">${dCycle}</a>` : `<span style="color:#9ca3af;">0.00</span>`;
+              let dWallet = p.wallet_address; let dCycle = dWallet && walletBalances[dWallet] ? walletBalances[dWallet].toFixed(2) : '0.00';
+              let cycleHtml = dWallet ? `<a href="javascript:void(0)" onclick="searchBalance('${dWallet}'); document.getElementById('rankModal').style.display='none'; switchView('block');" style="color:#8b5cf6;text-decoration:none;">${dCycle}</a>` : `<span>0.00</span>`;
 
-              rankTableHtml += `<tr style="${rowStyle}"><td>${idx + 1}</td><td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${p.domain}">${p.domain}</td><td>${vpsCount}</td><td style="color:#10b981;font-weight:bold;">${pAsset.toFixed(2)}</td><td style="font-weight:bold;">${cycleHtml}</td><td>${ls}</td></tr>`;
-          });
+              rankTableHtml += `<tr style="${rowStyle}"><td>${idx + 1}</td><td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.domain}</td><td>${p.vps_count}</td><td style="color:#f59e0b;font-weight:bold;">${pPower.toFixed(2)}</td><td>${cycleHtml}</td><td>${ls}</td></tr>`;
 
-          for (const p of rankList) {
               if (p.domain !== host) {
-                  let pAsset = parseFloat(p.total_asset) || 0;
-                  pAsset = Math.min(pAsset, 500000); 
-                  otherAssets += pAsset;
-                  
-                  if (pAsset > totalAsset + 0.001) {
-                      higherCount++;
-                  } else if (Math.abs(pAsset - totalAsset) <= 0.001) {
-                      if (p.domain > host) {
-                          higherCount++;
-                      }
-                  }
+                  otherPowers += pPower; otherAssets += Math.min(parseFloat(p.total_asset)||0, 500000);
+                  if (pPower > currentPowerUpdate + 0.001) higherCount++;
               }
-          }
-          localRank = higherCount + 1; globalNetAsset = totalAsset + otherAssets;
+          });
+          localRank = higherCount + 1; globalNetPower = currentPowerUpdate + otherPowers; globalNetAsset = currentAssetUpdate + otherAssets;
           
-          let finalityHeight = 0; const topBlock = await env.DB.prepare('SELECT slot_id FROM blockchain_ledger WHERE status = 1 ORDER BY slot_id DESC LIMIT 1').first();
+          const topBlock = await env.DB.prepare('SELECT slot_id FROM blockchain_ledger WHERE status = 1 ORDER BY slot_id DESC LIMIT 1').first();
           if (topBlock) {
-              finalityHeight = Math.max(1, topBlock.slot_id - FINALITY_DEPTH);
-              const finalizedBlock = await env.DB.prepare('SELECT slot_id, proposer_domain FROM blockchain_ledger WHERE slot_id <= ? AND status = 1 ORDER BY slot_id DESC LIMIT 1').bind(finalityHeight).first();
+              const finalizedBlock = await env.DB.prepare('SELECT slot_id, proposer_domain FROM blockchain_ledger WHERE slot_id <= ? AND status = 1 ORDER BY slot_id DESC LIMIT 1').bind(Math.max(1, topBlock.slot_id - FINALITY_DEPTH)).first();
               if (finalizedBlock) { currentHeight = finalizedBlock.slot_id; globalProposer = finalizedBlock.proposer_domain.replace('https://', ''); }
           }
-          const bCountRow = await env.DB.prepare('SELECT count(*) as c FROM blockchain_peers WHERE is_beacon IN ("true", "1") AND last_seen > ?').bind(activeThreshold).first();
-          activeBeacons = bCountRow ? bCountRow.c : 0;
-          const nCountRow = await env.DB.prepare('SELECT count(*) as c FROM blockchain_peers WHERE last_seen > ?').bind(activeThreshold).first();
-          globalNodes = nCountRow && nCountRow.c > 0 ? nCountRow.c : 1;
-          const mCount = await env.DB.prepare('SELECT count(*) as c FROM mempool').first();
-          pendingTxsCount = mCount ? mCount.c : 0;
+          const bCountRow = await env.DB.prepare('SELECT count(*) as c FROM blockchain_peers WHERE is_beacon IN ("true", "1") AND last_seen > ?').bind(activeThreshold).first(); activeBeacons = bCountRow ? bCountRow.c : 0;
+          const nCountRow = await env.DB.prepare('SELECT count(*) as c FROM blockchain_peers WHERE last_seen > ?').bind(activeThreshold).first(); globalNodes = nCountRow && nCountRow.c > 0 ? nCountRow.c : 1;
+          const mCount = await env.DB.prepare('SELECT count(*) as c FROM mempool').first(); pendingTxsCount = mCount ? mCount.c : 0;
       } catch(e) {}
 
-      let filterTagsHtml = `<span class="filter-tag" data-code="all" onclick="setFilter('all')">全部 ${results.length}</span>`;
+      let filterTagsHtml = `<span class="filter-tag" data-code="all" onclick="setFilter('all')">全部 ${allS.length}</span>`;
       for (const [code, count] of Object.entries(countryStats)) {
           filterTagsHtml += `<span class="filter-tag" data-code="${code.toLowerCase()}" onclick="setFilter('${code.toLowerCase()}')"><img src="https://flagcdn.com/16x12/${code.toLowerCase()}.png" alt="${code}"> ${code} ${count}</span>`;
       }
@@ -2390,22 +2429,24 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
             const flagHtml = cCode !== 'xx' ? `<img src="https://flagcdn.com/24x18/${cCode}.png" alt="${cCode}" style="vertical-align: sub; margin-right: 5px; border-radius: 2px;">` : '🏳️';
             
             let metaHtml = '';
+            metaHtml += `<div class="card-meta" style="margin-top:4px;"><span style="color:#f59e0b;font-weight:bold;">⚙️ 节点算力: ${server._power.toFixed(1)} H/s</span></div>`;
+
             if (sys.show_price === 'true') {
               let priceHtml = `价格: ${server.price || '免费'}`;
-              if (sys.show_asset === 'true' && server._amount > 0) priceHtml += ` <span style="color:#8b5cf6;font-weight:600;margin-left:8px;">剩余价值: ${server._remValue.toFixed(2)}${sys.asset_currency || '元'}</span>`;
-              metaHtml += `<div class="card-meta" style="margin-top:8px;">${priceHtml}</div>`;
+              if (sys.show_asset === 'true' && server._amount > 0) priceHtml += ` <span style="color:#8b5cf6;font-weight:600;margin-left:8px;">估值: ${server._remValue.toFixed(2)}${sys.asset_currency || '元'}</span>`;
+              metaHtml += `<div class="card-meta" style="margin-top:2px;">${priceHtml}</div>`;
             }
             if (sys.show_expire === 'true') {
               let expireText = '永久';
               if (server.expire_date) {
                 const expTime = new Date(server.expire_date).getTime();
-                if (!isNaN(expTime)) { const diff = expTime - now; expireText = diff > 0 ? Math.ceil(diff / (1000 * 3600 * 24)) + ' 天' : '已过期'; }
+                if (!isNaN(expTime)) { const diff = expTime - now; expireText = diff > 0 ? Math.ceil(diff / 86400000) + ' 天' : '已过期'; }
               }
               metaHtml += `<div class="card-meta" style="${sys.show_price !== 'true' ? 'margin-top:8px;' : ''}">剩余天数: ${expireText}</div>`;
             }
 
-            const rx_val_str = formatBytes(sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_rx || 0) : parseFloat(server.net_rx || 0));
-            const tx_val_str = formatBytes(sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_tx || 0) : parseFloat(server.net_tx || 0));
+            const rxField = sys.auto_reset_traffic === 'true' ? 'monthly_rx' : 'net_rx'; const txField = sys.auto_reset_traffic === 'true' ? 'monthly_tx' : 'net_tx';
+            const rx_val_str = formatBytes(parseFloat(server[rxField] || 0)); const tx_val_str = formatBytes(parseFloat(server[txField] || 0));
             metaHtml += `<div class="card-meta" style="${sys.show_price !== 'true' && sys.show_expire !== 'true' ? 'margin-top:8px;' : ''}">流量: <span style="color:#10b981">↓</span> ${rx_val_str} | <span style="color:#3b82f6">↑</span> ${tx_val_str}</div>`;
             const diffSec = Math.round((now - server.last_updated) / 1000);
             metaHtml += `<div class="card-meta" style="margin-top:2px;">在线: ${(server.uptime || '-').replace('days','天')} | 更新: ${diffSec}s前</div>`;
@@ -2417,10 +2458,7 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
             if (server.ip_v6 === '1') badgesHtml += `<span class="badge badge-v6">IPv6</span>`;
 
             const pingHtml = `<div class="ping-box"><span>电信 <span style="color:${getColor(server.ping_ct)}; font-weight:bold;">${server.ping_ct === '0' ? '超时' : server.ping_ct + 'ms'}</span></span><span>联通 <span style="color:${getColor(server.ping_cu)}; font-weight:bold;">${server.ping_cu === '0' ? '超时' : server.ping_cu + 'ms'}</span></span><span>移动 <span style="color:${getColor(server.ping_cm)}; font-weight:bold;">${server.ping_cm === '0' ? '超时' : server.ping_cm + 'ms'}</span></span><span>字节 <span style="color:${getColor(server.ping_bd)}; font-weight:bold;">${server.ping_bd === '0' ? '超时' : server.ping_bd + 'ms'}</span></span></div>`;
-            const ramUsedStr = formatBytes((parseFloat(server.ram_used || 0) * 1048576).toString());
-            const ramTotalStr = formatBytes((parseFloat(server.ram_total || 0) * 1048576).toString());
-            const diskUsedStr = formatBytes((parseFloat(server.disk_used || 0) * 1048576).toString());
-            const diskTotalStr = formatBytes((parseFloat(server.disk_total || 0) * 1048576).toString());
+            const ramUsedStr = formatBytes((parseFloat(server.ram_used || 0) * 1048576).toString()); const ramTotalStr = formatBytes((parseFloat(server.ram_total || 0) * 1048576).toString()); const diskUsedStr = formatBytes((parseFloat(server.disk_used || 0) * 1048576).toString()); const diskTotalStr = formatBytes((parseFloat(server.disk_total || 0) * 1048576).toString());
 
             cardContentHtml += `
               <a href="/?id=${server.id}" class="vps-card" data-country="${cCode}">
@@ -2431,42 +2469,13 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
                   ${pingHtml}
                 </div>
                 <div class="card-right">
-                  <div class="stat-group">
-                    <div class="stat-header"><span>CPU</span><span>${cpu}%</span></div>
-                    <div class="stat-bar-full"><div style="width:${cpu}%; background:${cpu > 80 ? '#ef4444' : '#3b82f6'};"></div></div>
-                    <div class="stat-subtext">${server.cpu_info || '-'}</div>
-                  </div>
-                  <div class="stat-group">
-                    <div class="stat-header"><span>内存</span><span>${ram}%</span></div>
-                    <div class="stat-bar-full"><div style="width:${ram}%; background:${ram > 80 ? '#ef4444' : '#10b981'};"></div></div>
-                    <div class="stat-subtext">${ramUsedStr} / ${ramTotalStr}</div>
-                  </div>
-                  <div class="stat-group">
-                    <div class="stat-header"><span>存储</span><span>${disk}%</span></div>
-                    <div class="stat-bar-full"><div style="width:${disk}%; background:${disk > 80 ? '#ef4444' : '#10b981'};"></div></div>
-                    <div class="stat-subtext">${diskUsedStr} / ${diskTotalStr}</div>
-                  </div>
-                  <div style="display:flex; justify-content:space-between; font-size:11px; color:#888; margin-top:2px;">
-                    <div>${server.os || '-'} | ${server.arch || '-'}</div>
-                    <div>TCP/UDP: ${server.tcp_conn || '0'} / ${server.udp_conn || '0'}</div>
-                  </div>
-                  <div style="display:flex; justify-content:space-between; font-size:11px; color:#888; margin-top:4px; gap:8px;">
-                    <div>↓ ${netInSpeed}/s</div><div>↑ ${netOutSpeed}/s</div>
-                  </div>
+                  <div class="stat-group"><div class="stat-header"><span>CPU</span><span>${cpu}%</span></div><div class="stat-bar-full"><div style="width:${cpu}%; background:#3b82f6;"></div></div></div>
+                  <div class="stat-group"><div class="stat-header"><span>内存</span><span>${ram}%</span></div><div class="stat-bar-full"><div style="width:${ram}%; background:#10b981;"></div></div></div>
+                  <div style="font-size:11px; color:#888; margin-top:4px;">↓ ${formatBytes(server.net_in_speed)}/s | ↑ ${formatBytes(server.net_out_speed)}/s</div>
                 </div>
               </a>
             `;
-
-            tableBodyHtml += `
-              <tr onclick="window.location.href='/?id=${server.id}'" style="cursor:pointer;" data-country="${cCode}">
-                <td style="text-align:center;"><div class="status-dot" style="background:${statusColor}; display:inline-block; margin:0;"></div></td>
-                <td><b>${server.name}</b></td><td>${flagHtml}</td><td><span class="os-text">${server.os || '-'}</span></td>
-                <td><div style="display:flex; align-items:center; gap:8px;"><div class="stat-bar" style="width:50px; margin:0;"><div style="width:${cpu}%; background:#3b82f6;"></div></div><span>${cpu}%</span></div></td>
-                <td><div style="display:flex; align-items:center; gap:8px;"><div class="stat-bar" style="width:50px; margin:0;"><div style="width:${ram}%; background:#10b981;"></div></div><span>${ram}%</span></div></td>
-                <td><div style="display:flex; align-items:center; gap:8px;"><div class="stat-bar" style="width:50px; margin:0;"><div style="width:${disk}%; background:#10b981;"></div></div><span>${disk}%</span></div></td>
-                <td>${rx_val_str} | ${tx_val_str}</td><td>${netInSpeed}/s</td><td>${netOutSpeed}/s</td><td>${Math.round((now - server.last_updated)/1000)} 秒前</td>
-              </tr>
-            `;
+            tableBodyHtml += `<tr data-country="${cCode}"><td><div class="status-dot" style="background:${statusColor};"></div></td><td><b>${server.name}</b></td><td>${flagHtml}</td><td>${cpu}%</td><td>${ram}%</td><td><b style="color:#f59e0b;">${server._power.toFixed(1)} H/s</b></td></tr>`;
           }
           cardContentHtml += `</div>`;
         }
@@ -2475,13 +2484,10 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
       let richListRows = '';
       try {
           const { results: rList } = await env.DB.prepare('SELECT address, balance FROM blockchain_wallets ORDER BY balance DESC LIMIT 10').all();
-          rList.forEach((r, idx) => {
-              const shortAddr = r.address.length > 15 ? r.address.substring(0,8) + '...' + r.address.slice(-6) : r.address;
-              richListRows += `<tr><td>#${idx+1} <a href="javascript:void(0)" onclick="searchBalance('${r.address}')" style="color:#3b82f6; text-decoration:none; font-family:monospace;">${shortAddr}</a></td><td style="text-align:right; font-weight:bold; color:#10b981;">${r.balance.toFixed(2)} Cycle</td></tr>`;
-          });
+          rList.forEach((r, idx) => { richListRows += `<tr><td>#${idx+1} <span style="color:#3b82f6; font-family:monospace; cursor:pointer; text-decoration:underline;" onclick="searchBalance('${r.address}')">${r.address.substring(0,8)}...${r.address.slice(-6)}</span></td><td style="text-align:right; font-weight:bold; color:#10b981;">${r.balance.toFixed(2)} MJJ</td></tr>`; });
       } catch(e) {}
 
-      let blockExplorerRows = '';
+      let blockExplorerRows = ''; let activeLotteries = [];
       try {
           const { results: recentBlocks } = await env.DB.prepare('SELECT * FROM blockchain_ledger WHERE status = 1 ORDER BY slot_id DESC LIMIT 50').all();
           for (const b of recentBlocks) {
@@ -2490,6 +2496,7 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
               try {
                   const bPayload = JSON.parse(b.payload);
                   if (bPayload.txs && bPayload.txs.length > 0) {
+                      bPayload.txs.forEach(t => { if (t.type === 'LOTTERY_CREATE') activeLotteries.push(t); });
                       const safeTxs = JSON.stringify(bPayload.txs).replace(/'/g, "&#39;").replace(/"/g, "&quot;");
                       txsHtml = `<a href="javascript:void(0)" onclick="showBlockTxs('${safeTxs}')" style="color:#8b5cf6; font-weight:bold; text-decoration:underline;">${bPayload.txs.length} Txs</a>`;
                   }
@@ -2498,26 +2505,47 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
           }
       } catch(e){}
 
+      let lotteryMap = new Map(); activeLotteries.forEach(l => lotteryMap.set(l.pool_id, l)); activeLotteries = Array.from(lotteryMap.values());
+      let lotteryShelfHtml = activeLotteries.map(l => `
+        <div style="background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:15px; border-left:4px solid #8b5cf6; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <b style="color:#0f172a; font-size:16px;">🎁 ${l.name}</b><br>
+                <small style="color:#64748b; font-family:monospace;">轮盘ID: ${l.pool_id}</small><br>
+                <small style="color:#f59e0b; font-weight:bold;">目标开奖高度: Block #${l.target_block || (currentHeight + 5)}</small>
+            </div>
+            <button class="btn btn-purple" style="padding:10px 20px; font-size:14px; box-shadow: 0 4px 6px rgba(139,92,246,0.3);" onclick="quickBetLottery('${l.pool_id}', ${l.min_bet})">🎲 燃烧 ${l.min_bet} MJJ 参与抽奖</button>
+        </div>
+      `).join('');
+      if (!lotteryShelfHtml) lotteryShelfHtml = `<p style="text-align:center; color:#94a3b8; font-size:14px; margin:30px 0;">🎰 暂无活跃抽奖提案，您可以在右侧自主发起做庄！</p>`;
+
+      const currentHalving = Math.floor(currentHeight / HALVING_INTERVAL);
+      const nextHalvingBlock = (currentHalving + 1) * HALVING_INTERVAL;
+      const currentReward = getCoinbaseReward(currentHeight);
+
+      // 🚀 完整保留 本站统计
+      const localStatsHtml = `
+          <div class="global-stats" id="ajax-stats">
+            <div class="g-item"><div class="g-label">本站服务器总数 / 总物理算力</div><div class="g-val">${allS.length} 台 / <span style="color:#f59e0b;">${currentPowerUpdate.toFixed(2)} H/s</span></div></div>
+            ${sys.show_asset === 'true' ? `<div class="g-item"><div class="g-label">本站数字资产 (仅供参考)</div><div class="g-val">${currentAssetUpdate.toFixed(2)} CNY</div></div>` : ''}
+            <div class="g-item"><div class="g-label">总计流量 (Rx / Tx)</div><div class="g-val" style="color:#3b82f6;">${formatBytes(globalNetRx)} / ${formatBytes(globalNetTx)}</div></div>
+            <div class="g-item"><div class="g-label">本站实时网速 (In / Out)</div><div class="g-val" style="color:#10b981;">↓ ${formatBytes(globalSpeedIn)}/s | ↑ ${formatBytes(globalSpeedOut)}/s</div></div>
+          </div>
+      `;
+
       if (isAjax) {
           const ajaxResponse = `
-              <div id="ajax-stats-payload" data-rank="${localRank}" data-net-asset="${(globalNetAsset || 0).toFixed(2)}" data-proposer="${globalProposer}" data-height="${currentHeight}" data-beacons="${activeBeacons}" data-nodes="${globalNodes}" data-pending-txs="${pendingTxsCount}" style="display:none;"></div>
-              <div id="ajax-stats" style="display:none;">
-                <div class="g-item"><div class="g-label">本站服务器总数</div><div class="g-val">${results.length}</div></div>
-                ${sys.show_asset === 'true' ? `<div class="g-item"><div class="g-label">本站数字资产</div><div class="g-val">${(totalAsset||0).toFixed(2)} | ${(remAsset||0).toFixed(2)}</div></div>` : ''}
-                <div class="g-item"><div class="g-label">总计流量</div><div class="g-val">${formatBytes(globalNetRx)} | ${formatBytes(globalNetTx)}</div></div>
-                <div class="g-item"><div class="g-label">实时网速</div><div class="g-val">↓ ${formatBytes(globalSpeedIn)}/s | ↑ ${formatBytes(globalSpeedOut)}/s</div></div>
-              </div>
+              <div id="ajax-stats-payload" data-rank="${localRank}" data-net-power="${globalNetPower.toFixed(2)}" data-net-asset="${globalNetAsset.toFixed(2)}" data-proposer="${globalProposer}" data-height="${currentHeight}" data-beacons="${activeBeacons}" data-nodes="${globalNodes}" data-pending-txs="${pendingTxsCount}" style="display:none;"></div>
+              ${localStatsHtml}
               <div id="ajax-filters" style="display:none;">${filterTagsHtml}</div>
               <div id="ajax-cards">${cardContentHtml}</div>
-              <tbody id="ajax-table" style="display:none;">${tableBodyHtml || '<tr><td>暂无数据</td></tr>'}</tbody>
+              <tbody id="ajax-table" style="display:none;">${tableBodyHtml}</tbody>
               <tbody id="ajax-blocks" style="display:none;">${blockExplorerRows}</tbody>
               <tbody id="ajax-richlist" style="display:none;">${richListRows}</tbody>
               <tbody id="ajax-ranklist" style="display:none;">${rankTableHtml}</tbody>
+              <div id="lottery-shelf-payload" style="display:none;">${lotteryShelfHtml}</div>
               <script id="map-data" type="application/json">${JSON.stringify(countryStats)}</script>
           `;
-          
-          globalThis.ajaxCacheSec = nowSec;
-          globalThis.ajaxCacheData = ajaxResponse;
+          globalThis.ajaxCacheSec = nowSec; globalThis.ajaxCacheData = ajaxResponse;
           return new Response(ajaxResponse, { headers: { 'Content-Type': 'text/html' } });
       }
 
@@ -2532,37 +2560,70 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
         ${sys.custom_head || ''}
         <style>
           ${themeStyles}
-          .consensus-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.2); padding: 15px 20px; border-radius: 12px; margin-bottom: 25px; font-family: monospace; box-sizing: border-box;}
-          .c-label { font-size: 12px; color: #64748b; text-transform: uppercase; margin-bottom: 4px; }
-          .c-val { font-size: 18px; font-weight: bold; color: #10b981; }
-          .ticker-bar { width: 100%; height: 4px; background: #e2e8f0; margin-top: 8px; border-radius: 2px; overflow: hidden; }
-          .ticker-fill { height: 100%; background: #10b981; transition: width 0.1s linear; }
           body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f4f5f7; color: #333; margin: 0; padding: 20px; }
           .container { max-width: 1200px; margin: 0 auto; }
           .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
           .admin-btn { padding: 8px 16px; background: #3b82f6; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight:bold; }
-          .global-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); margin-bottom: 30px; text-align: center; }
+          
+          .global-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); margin-bottom: 25px; text-align: center; border-left: 4px solid #3b82f6; }
           .g-val { font-size: 22px; font-weight: bold; color: #111; margin: 8px 0; }
-          .g-label { font-size: 13px; color: #666; }
-          .asset-radar { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; flex-wrap: wrap; background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
-          .asset-radar input { flex: 1; min-width: 250px; padding: 10px 15px; border: 1px solid #e2e8f0; border-radius: 8px; font-family: monospace; }
-          .asset-radar button { background: #8b5cf6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
-          .block-dashboard-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; align-items: start; }
-          .rich-list-card { background: white; border-radius: 12px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
-          .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; }
-          .modal-content { background: white; padding: 20px; border-radius: 12px; width: 600px; max-width: 95%; margin: 40px auto; position: relative; max-height: 85vh; overflow-y: auto; }
+          .g-label { font-size: 13px; color: #64748b; font-weight:bold; text-transform: uppercase; }
+
+          .consensus-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.2); padding: 15px 20px; border-radius: 12px; margin-bottom: 20px; box-sizing: border-box;}
+          .c-label { font-size: 12px; color: #64748b; text-transform: uppercase; margin-bottom: 4px; }
+          .c-val { font-size: 18px; font-weight: bold; color: #10b981; }
+          .ticker-bar { width: 100%; height: 4px; background: #e2e8f0; margin-top: 8px; border-radius: 2px; overflow: hidden; }
+          .ticker-fill { height: 100%; background: #10b981; transition: width 0.1s linear; }
+
+          .view-controls { display: flex; gap: 8px; margin-bottom: 25px; flex-wrap:wrap;}
+          .toggle-btn { padding: 10px 20px; border: none; background: #e2e8f0; cursor: pointer; border-radius: 8px; font-weight: 600; color: #475569; transition:all 0.2s;}
+          .toggle-btn.active { background: #3b82f6; color: white; box-shadow: 0 4px 10px rgba(59,130,246,0.3); }
+          .view-panel { display: none; } .view-panel.active { display: block; }
+          
+          .btn { padding: 10px 16px; border: none; border-radius: 6px; font-weight: bold; color: white; cursor: pointer; transition: opacity 0.2s; }
+          .btn-blue { background: #3b82f6; } .btn-purple { background: #8b5cf6; }
+          
+          .custom-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+          .custom-table th { background: #f8fafc; padding: 14px 16px; color: #64748b; font-weight: 600; border-bottom: 1px solid #e2e8f0; }
+          .custom-table td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; }
+          
+          .grid-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 15px; }
+          .vps-card { display: flex; justify-content: space-between; align-items: stretch; background: white; padding: 18px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); text-decoration: none; color: inherit; transition: all 0.2s ease; border:1px solid transparent; }
+          .vps-card:hover { transform: translateY(-3px); box-shadow: 0 8px 15px rgba(0,0,0,0.1); border-color:#38bdf8;}
+          .card-left { flex: 0 0 180px; display: flex; flex-direction: column; justify-content: center; }
+          .card-title { display: flex; align-items: center; margin-bottom: 4px; font-weight: 600; font-size:15px; }
+          .status-dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; flex-shrink:0; }
+          .card-meta { font-size: 12px; color: #6b7280; margin-bottom: 3px; }
+          .card-right { flex: 1; padding-left: 15px; border-left: 1px solid rgba(150,150,150,0.1); display:flex; flex-direction:column; justify-content:center;}
+          .stat-group { display: flex; flex-direction: column; margin-bottom: 8px; }
+          .stat-header { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+          .stat-bar-full { width: 100%; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
+          .stat-bar-full > div { height: 100%; border-radius: 3px; }
+          .ping-box { font-size:11px; margin-top:8px; display:flex; gap:8px; padding: 6px; background:#f8fafc; border-radius:4px; }
+
+          .dapp-card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+          input { padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size:14px; width:100%; box-sizing:border-box; margin-bottom:12px; }
+          label { font-size:13px; font-weight:bold; color:#475569; display:block; margin-bottom:6px; }
+
+          /* 修复模态框到底部的核心CSS */
+          .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1000; overflow-y: auto; backdrop-filter: blur(4px); }
+          .modal-content { background: white; padding: 25px; border-radius: 16px; width: 800px; max-width: 95%; margin: 60px auto; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+          .theme2 .modal-content { background: #161b22; color: #c9d1d9; border: 1px solid #30363d; }
+          .theme4 .modal-content { background: rgba(0,0,0,0.8); color: #fff; backdrop-filter: blur(10px); }
+          .theme5 .modal-content { background: #0b0c10; color: #0ff; border: 1px solid #f0f; }
         </style>
       </head>
       <body class="${sys.theme || 'theme1'}">
         <div class="container" id="app-container">
           <div class="header">
-            <h1 style="margin:0;">${sys.site_title}</h1>
+            <h1 style="margin:0; font-size:28px;">${sys.site_title}</h1>
             <div style="display: flex; align-items: center; gap: 15px;">
-              <div class="view-controls">
+              <div class="view-controls" style="margin-bottom:0;">
                 <button class="toggle-btn active" id="btn-card" onclick="switchView('card')">卡片</button>
                 <button class="toggle-btn" id="btn-table" onclick="switchView('table')">表格</button>
                 <button class="toggle-btn" id="btn-map" onclick="switchView('map')">地图</button>
                 <button class="toggle-btn" id="btn-block" onclick="switchView('block')">链上区块</button>
+                <button class="toggle-btn" id="btn-dapps" onclick="switchView('dapps')" style="color:#8b5cf6;">🎰 去中心化幸运抽奖</button>
               </div>
               <a href="/admin" class="admin-btn">${sys.admin_title}</a>
             </div>
@@ -2581,43 +2642,124 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
 
           <div class="global-stats" style="margin-bottom:15px;">
             <div class="g-item"><div class="g-label">全网综合排名 / 内存池待打包</div><div class="g-val">🏆 第 <a href="javascript:void(0)" onclick="document.getElementById('rankModal').style.display='block'" style="color:#f59e0b; text-decoration:underline; cursor:pointer;" id="ui-rank">${localRank}</a> 名 | <span style="color:#8b5cf6;" id="ui-pending-txs">${pendingTxsCount}</span> 笔</div></div>
-            <div class="g-item"><div class="g-label">全网探针总资产重力</div><div class="g-val">💰 <span id="ui-net-asset">${(globalNetAsset || 0).toFixed(2)}</span> CNY</div></div>
+            <div class="g-item"><div class="g-label">全网探针总物理算力 (Power)</div><div class="g-val">🔥 <span id="ui-net-power">${(globalNetPower || 0).toFixed(2)}</span> H/s</div><div style="font-size:12px; color:#888; margin-top:5px;">全网数字资产: <span id="ui-net-asset">${(globalNetAsset || 0).toFixed(2)}</span> CNY (仅作展示)</div></div>
           </div>
 
-          <div class="filter-bar" id="ajax-filters">${filterTagsHtml}</div>
-          <div class="global-stats" id="ajax-stats">
-            <div class="g-item"><div class="g-label">本站服务器总数</div><div class="g-val">${results.length}</div></div>
-            <div class="g-item"><div class="g-label">总计流量</div><div class="g-val">${formatBytes(globalNetRx)} | ${formatBytes(globalNetTx)}</div></div>
+          <div id="view-card" class="view-panel active">
+             ${localStatsHtml}
+             <div class="filter-bar" id="ajax-filters" style="margin-bottom:15px;">${filterTagsHtml}</div>
+             <div id="ajax-cards">${cardContentHtml}</div>
           </div>
-
-          <div id="view-card" class="view-panel active"><div id="ajax-cards">${cardContentHtml}</div></div>
-          <div id="view-table" class="view-panel"><div class="table-responsive"><table class="custom-table"><thead><tr><th>状态</th><th>节点名称</th><th>地区</th><th>系统</th><th>CPU</th><th>内存</th><th>磁盘</th><th>流量</th><th>下行</th><th>上行</th><th>更新</th></tr></thead><tbody id="ajax-table">${tableBodyHtml}</tbody></table></div></div>
-          <div id="view-map" class="view-panel"><div id="map-container"></div></div>
           
+          <div id="view-table" class="view-panel">
+             <div class="table-responsive"><table class="custom-table"><thead><tr><th>状态</th><th>节点名称</th><th>地区</th><th>CPU</th><th>内存</th><th>算力(H/s)</th></tr></thead><tbody id="ajax-table">${tableBodyHtml}</tbody></table></div>
+          </div>
+
+          <div id="view-map" class="view-panel">
+             <div id="map-container"></div>
+          </div>
+
           <div id="view-block" class="view-panel">
-            <div class="asset-radar"><input type="text" id="radar-input" placeholder="输入 EVM 钱包地址 (0x...)"><button onclick="executeSearch()">🔍 查询资产</button></div>
-            <div id="ui-balance-result" style="display:none; padding:15px; margin-bottom:20px; background:rgba(16,185,129,0.1); border-radius:8px;"></div>
-            <div class="block-dashboard-layout">
-                <div class="table-responsive" style="background:white; border-radius:12px; padding:10px;"><table class="custom-table"><thead><tr><th>区块高度 (Slot)</th><th>出块见证人</th><th>区块哈希</th><th>总难度</th><th>交易数</th><th>时间</th></tr></thead><tbody id="table-blocks-body">${blockExplorerRows}</tbody></table></div>
-                <div class="rich-list-card"><h3>🏆 Cycle 财富英雄榜</h3><table class="custom-table"><tbody id="ajax-richlist">${richListRows}</tbody></table></div>
+            <div style="background:white; padding:20px; border-radius:12px; margin-bottom:20px; box-shadow:0 2px 8px rgba(0,0,0,0.04); display:flex; gap:10px; align-items:center;">
+               <span style="font-size:24px;">🔍</span>
+               <input type="text" id="radar-input" placeholder="输入钱包地址查 MJJ 余额 (0x...)" style="margin:0; flex:1;">
+               <button class="btn btn-blue" onclick="executeSearch()">一键查账</button>
+            </div>
+            <div id="ui-balance-result" style="display:none; padding:15px; margin-bottom:20px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; font-size:16px;"></div>
+
+            <div style="display:grid; grid-template-columns: 2fr 1fr; gap:20px; align-items:start;">
+                <div style="background:white; border-radius:12px; padding:15px; box-shadow:0 2px 8px rgba(0,0,0,0.04); overflow-x:auto;">
+                    <h3 style="margin-top:0;">📦 最新物理区块 (Ledger)</h3>
+                    <table class="custom-table">
+                        <thead><tr><th>高度 (Slot)</th><th>出块见证人</th><th>区块哈希</th><th>总难度</th><th>打包交易</th><th>时间</th></tr></thead>
+                        <tbody id="table-blocks-body">${blockExplorerRows}</tbody>
+                    </table>
+                </div>
+                <div style="background:white; border-radius:12px; padding:15px; box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+                    <h3 style="margin-top:0;">🏆 MJJ 财富榜</h3>
+                    <table class="custom-table"><tbody id="ajax-richlist">${richListRows}</tbody></table>
+                </div>
             </div>
           </div>
+
+          <div id="view-dapps" class="view-panel">
+             <div style="background: linear-gradient(90deg, #1e293b, #0f172a); color: white; padding: 25px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                <h2 style="margin:0 0 10px 0; color:#38bdf8;">🪙 MJJ 算力母币引擎 (总量2100万，现已开启减半)</h2>
+                <p style="font-size:14px; color:#cbd5e1; line-height:1.6; margin:0 0 15px 0;">
+                    <b>💡 零损耗物理拟合：</b>绝对不跑满或损伤您的机器，仅量化您的探针配置作为分配权重。<br>
+                    <code style="background:#334155; padding:4px 8px; border-radius:4px; color:#10b981; display:inline-block; margin-top:8px;">物理算力 = (核心数 × 10 + 内存GB × 5) × 网络质量因子 × 在线时长加成</code><br>
+                </p>
+                <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid #334155; padding-top:15px;">
+                    <div>
+                        <div style="font-size:13px; color:#94a3b8;">当前区块奖励 (Reward)</div>
+                        <div style="font-size:28px; font-weight:bold; color:#10b981;">${currentReward.toFixed(2)} <span style="font-size:16px;">MJJ/块</span></div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:13px; color:#94a3b8;">距离下一次产量减半还剩</div>
+                        <div style="font-size:28px; font-weight:bold; color:#f59e0b;">${nextHalvingBlock - currentHeight} <span style="font-size:16px;">块</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap:25px;">
+                <div class="dapp-card" style="border-top: 4px solid #8b5cf6;">
+                    <h3 style="margin-top:0; color:#0f172a; font-size:22px;">🎰 dLottery 链下幸运抽奖</h3>
+                    <p style="font-size:14px; color:#64748b; margin-bottom:20px;">自由燃烧 MJJ 投注盲盒。无人干预，前端自解密计算中奖结果。</p>
+                    
+                    <div style="max-height:350px; overflow-y:auto; margin-bottom:20px; padding-right:8px;" id="lottery-shelf">
+                        ${lotteryShelfHtml}
+                    </div>
+
+                    <label>您的下注钱包地址 (0x...)</label>
+                    <input type="text" id="lottery-my-address" placeholder="下注前请先在此处绑定您的身份钱包">
+                    <div id="lottery-res" style="font-size:14px; margin-top:5px; color:#ef4444; font-weight:bold;"></div>
+                </div>
+
+                <div class="dapp-card" style="border-top: 4px solid #f59e0b; background:#f8fafc;">
+                    <h3 style="margin-top:0; color:#0f172a; font-size:22px;">🚀 自由发起抽奖 (做庄)</h3>
+                    <p style="font-size:14px; color:#64748b; margin-bottom:20px;">全网可见。到达目标高度后，由最终物理区块哈希决定胜负。</p>
+                    
+                    <label>抽奖活动主题</label>
+                    <input type="text" id="lottery-pub-name" placeholder="如: 拼手气抽香港CN2独享小鸡">
+                    
+                    <label>单注门槛 (最低燃烧 MJJ)</label>
+                    <input type="number" id="lottery-pub-price" placeholder="例如: 1.0">
+                    
+                    <label>设定开奖物理区块高度 (当前高度 #${currentHeight})</label>
+                    <input type="number" id="lottery-target-block" placeholder="例如: ${currentHeight + 20}">
+                    
+                    <label>您的庄家管理钱包地址 (0x...)</label>
+                    <input type="text" id="lottery-pub-seller" placeholder="活动结束后用于核销或空投奖励">
+                    
+                    <button class="btn btn-blue" style="width:100%; padding:14px; font-size:16px; margin-top:10px;" onclick="createLotteryPool()">🎲 广播设立抽奖池</button>
+                    <div id="lottery-pub-res" style="font-size:14px; margin-top:10px; color:#10b981; font-weight:bold;"></div>
+                </div>
+            </div>
+          </div>
+
           ${getFooterHtml(sys)}
         </div>
 
-        <div id="txTraceModal" class="modal"><div class="modal-content"><h3>🔗 区块交易流水</h3><div id="txTraceList" style="max-height:400px; overflow-y:auto; margin-bottom:15px;"></div><button onclick="document.getElementById('txTraceModal').style.display='none'">关闭</button></div></div>
+        <div id="txTraceModal" class="modal">
+            <div class="modal-content">
+                <h3 style="margin-top:0;">🔗 区块交易流水</h3>
+                <div id="txTraceList" style="max-height:400px; overflow-y:auto; margin-bottom:15px; font-size:14px;"></div>
+                <button onclick="document.getElementById('txTraceModal').style.display='none'" class="btn" style="background:#64748b; padding:8px 16px;">关闭</button>
+            </div>
+        </div>
         
         <div id="rankModal" class="modal">
           <div class="modal-content" style="width: 800px; max-width: 95%;">
-            <h3 style="margin-top:0;">🏆 全网权重节点排名 (Beacon Nodes)</h3>
+            <h3 style="margin-top:0;">🏆 全网物理算力节点排名 (Beacon Nodes)</h3>
+            <p style="font-size:12px; color:#666;">注: 数字资产估值仅作展示，全网排名基于硬件信息与网络质量综合换算出的硬核算力 (Power)。</p>
             <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
               <table class="custom-table">
-                <thead><tr><th>排名</th><th>节点域名</th><th>探针数</th><th>资产重力(CNY)</th><th>Cycle 余额</th><th>最后活跃</th></tr></thead>
+                <thead><tr><th>排名</th><th>节点域名</th><th>探针数</th><th>物理算力(H/s)</th><th>MJJ 余额</th><th>最后活跃</th></tr></thead>
                 <tbody id="table-rank-body">${rankTableHtml}</tbody>
               </table>
             </div>
             <div style="text-align:right; margin-top:15px;">
-              <button class="btn btn-blue" onclick="document.getElementById('rankModal').style.display='none'">关闭</button>
+              <button class="btn btn-blue" style="padding:8px 16px;" onclick="document.getElementById('rankModal').style.display='none'">关闭</button>
             </div>
           </div>
         </div>
@@ -2633,8 +2775,10 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
           }, 100);
 
           function switchView(viewName) {
-            document.querySelectorAll('.toggle-btn').forEach(btn => btn.classList.remove('active')); document.getElementById('btn-' + viewName).classList.add('active');
-            document.querySelectorAll('.view-panel').forEach(panel => panel.classList.remove('active')); document.getElementById('view-' + viewName).classList.add('active');
+            document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('btn-'+viewName).classList.add('active');
+            document.querySelectorAll('.view-panel').forEach(p => p.style.display = 'none');
+            document.getElementById('view-'+viewName).style.display = 'block';
             if (viewName === 'map') { if (!mapInitialized) { initMap(); mapInitialized = true; } else { window.myMap.invalidateSize(); } }
           }
           function setFilter(code) { window.currentFilter = code; applyFilter(); }
@@ -2642,25 +2786,57 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
               document.querySelectorAll('.vps-card').forEach(el => el.style.display = (window.currentFilter === 'all' || el.dataset.country === window.currentFilter) ? 'flex' : 'none');
               document.querySelectorAll('#ajax-table tr').forEach(el => el.style.display = (window.currentFilter === 'all' || el.dataset.country === window.currentFilter) ? '' : 'none');
           }
-          
-          function searchBalance(addr) {
-              document.getElementById('radar-input').value = addr;
-              executeSearch();
-          }
 
           async function executeSearch() {
               const addr = document.getElementById('radar-input').value.trim(); if(!addr) return;
-              const resDiv = document.getElementById('ui-balance-result'); resDiv.style.display = 'block';
+              const resDiv = document.getElementById('ui-balance-result'); resDiv.style.display = 'block'; resDiv.innerHTML = "扫描账本中...";
               try {
                   const res = await fetch('/?action=balance&address=' + addr + '&t=' + Date.now()); const data = await res.json();
-                  resDiv.innerHTML = \`账户地址 <b>\${addr}</b> 持有资产：<b style="color:#10b981;">\${data.balance.toFixed(2)} Cycle</b>\`;
-              } catch(e) { resDiv.innerHTML = \`查询失败\`; }
+                  resDiv.innerHTML = \`🎯 账户 [ <b>\${addr}</b> ] 实时余额：<span style="color:#3b82f6; font-weight:bold; margin-left:15px; font-size:22px;">\${data.balance.toFixed(4)} MJJ</span>\`;
+              } catch(e){ resDiv.innerHTML = "查询超时，网络无响应"; }
           }
+
+          async function broadcastTx(txObj, resId) {
+              const div = document.getElementById(resId); div.innerText = "正在打包 Tx 发送入内存池..."; div.style.color = '#f59e0b';
+              try {
+                  const res = await fetch('/api/consensus/tx', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ tx: txObj }) });
+                  if (res.ok) { div.style.color = '#10b981'; div.innerText = "✅ 广播成功！进入 TTL 队列等待物理打包。"; }
+                  else { const err = await res.json(); div.style.color = '#ef4444'; div.innerText = "❌ 拒绝: " + (err.error || "非法参数"); }
+              } catch(e) { div.style.color = '#ef4444'; div.innerText = "网络断开，P2P 广播失败"; }
+          }
+
+          function quickBetLottery(poolId, minBet) {
+              const myAddr = document.getElementById('lottery-my-address').value.trim();
+              if(!myAddr) { alert("请先在下方输入您的身份钱包地址！"); document.getElementById('lottery-my-address').focus(); return; }
+              if(!confirm(\`确定要燃烧 \${minBet} MJJ 参与 [\${poolId}] 抽奖吗？资金将进入黑洞销毁！\`)) return;
+              const tx = { id: crypto.randomUUID(), type: 'LOTTERY_BET', from: myAddr, target_pool: poolId, amount: parseFloat(minBet), timestamp: Date.now() };
+              broadcastTx(tx, 'lottery-res');
+          }
+
+          function createLotteryPool() {
+              const name = document.getElementById('lottery-pub-name').value.trim();
+              const min = document.getElementById('lottery-pub-price').value.trim();
+              const target = document.getElementById('lottery-target-block').value.trim();
+              const wallet = document.getElementById('lottery-pub-seller').value.trim();
+              if(!name || !min || !target || !wallet) return alert("请完整填写发起抽奖的表单数据！");
+              
+              const lotId = 'pool-' + Date.now().toString(16).substring(4);
+              const tx = { id: crypto.randomUUID(), type: 'LOTTERY_CREATE', from: wallet, amount: 0, pool_id: lotId, name: name, min_bet: parseFloat(min), target_block: parseInt(target), timestamp: Date.now() };
+              broadcastTx(tx, 'lottery-pub-res');
+              setTimeout(() => alert("抽奖设立交易已广播！\\n您的全网唯一抽奖 ID 为: " + lotId), 500);
+          }
+
           function showBlockTxs(txsStr) {
-              const txs = JSON.parse(txsStr); let html = '<ul>';
-              txs.forEach(tx => { html += tx.type === 'COINBASE' ? \`<li>⛏️ 挖矿奖励 &rarr; \${tx.to} [+ \${tx.amount} Cycle]</li>\` : \`<li>💸 转账: \${tx.from} &rarr; \${tx.to} [\${tx.amount} Cycle]</li>\`; });
+              const txs = JSON.parse(txsStr); let html = '<ul style="list-style:none; padding:0;">';
+              txs.forEach(tx => { 
+                  if(tx.type === 'COINBASE') html += \`<li style="margin-bottom:8px;">⛏️ 挖矿奖励 &rarr; <span style="font-family:monospace;">\${tx.to.substring(0,8)}...</span> <b style="color:#10b981;">[+ \${tx.amount} MJJ]</b></li>\`; 
+                  else if(tx.type === 'LOTTERY_CREATE') html += \`<li style="margin-bottom:8px;">🚀 发起盲盒: \${tx.from.substring(0,8)}... 设立奖池 <b style="color:#8b5cf6;">[\${tx.pool_id}]</b></li>\`;
+                  else if(tx.type === 'LOTTERY_BET') html += \`<li style="margin-bottom:8px;">🎰 抽奖投注: \${tx.from.substring(0,8)}... <b style="color:#ef4444;">燃烧 \${tx.amount} MJJ</b> 投入盲盒</li>\`;
+                  else html += \`<li style="margin-bottom:8px;">💸 转账: \${tx.from.substring(0,8)}... &rarr; \${tx.to.substring(0,8)}... <b style="color:#3b82f6;">[\${tx.amount} MJJ]</b></li>\`;
+              });
               document.getElementById('txTraceList').innerHTML = html + '</ul>'; document.getElementById('txTraceModal').style.display = 'block';
           }
+
           let markersLayer; let geoJsonLayer; let worldGeoJson = null; let currentMapDataStr = "";
           const countryCoords = { 'US': [37.09, -95.71], 'CN': [35.86, 104.19], 'JP': [36.20, 138.25], 'HK': [22.31, 114.16], 'SG': [1.35, 103.81], 'DE': [51.16, 10.45] };
           async function initMap() {
@@ -2681,10 +2857,10 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
               const parser = new DOMParser(); const newDoc = parser.parseFromString(htmlText, 'text/html');
               const payloadData = newDoc.getElementById('ajax-stats-payload');
               if (payloadData) {
-                  document.getElementById('ui-rank').innerText = payloadData.getAttribute('data-rank'); document.getElementById('ui-net-asset').innerText = payloadData.getAttribute('data-net-asset'); document.getElementById('ui-proposer').innerText = payloadData.getAttribute('data-proposer'); document.getElementById('ui-height').innerText = payloadData.getAttribute('data-height'); document.getElementById('ui-beacons').innerText = payloadData.getAttribute('data-beacons'); document.getElementById('ui-nodes').innerText = payloadData.getAttribute('data-nodes'); document.getElementById('ui-pending-txs').innerText = payloadData.getAttribute('data-pending-txs');
+                  document.getElementById('ui-rank').innerText = payloadData.getAttribute('data-rank'); document.getElementById('ui-net-power').innerText = payloadData.getAttribute('data-net-power'); document.getElementById('ui-net-asset').innerText = payloadData.getAttribute('data-net-asset'); document.getElementById('ui-proposer').innerText = payloadData.getAttribute('data-proposer'); document.getElementById('ui-height').innerText = payloadData.getAttribute('data-height'); document.getElementById('ui-beacons').innerText = payloadData.getAttribute('data-beacons'); document.getElementById('ui-nodes').innerText = payloadData.getAttribute('data-nodes'); document.getElementById('ui-pending-txs').innerText = payloadData.getAttribute('data-pending-txs');
               }
-              ['ajax-stats', 'ajax-cards', 'ajax-table', 'table-blocks-body', 'ajax-filters', 'map-data', 'ajax-richlist', 'table-rank-body'].forEach(id => {
-                  const newEl = newDoc.getElementById(id === 'table-blocks-body' ? 'ajax-blocks' : (id === 'table-rank-body' ? 'ajax-ranklist' : id));
+              ['ajax-stats', 'ajax-cards', 'ajax-table', 'table-blocks-body', 'lottery-shelf', 'ajax-richlist', 'table-rank-body'].forEach(id => {
+                  const newEl = newDoc.getElementById(id === 'table-blocks-body' ? 'ajax-blocks' : (id === 'lottery-shelf' ? 'lottery-shelf-payload' : (id === 'table-rank-body' ? 'ajax-ranklist' : id)));
                   if (newEl && document.getElementById(id)) { if (id === 'map-data') document.getElementById(id).textContent = newEl.textContent; else document.getElementById(id).innerHTML = newEl.innerHTML; }
               });
               drawMarkers(); applyFilter(); 
