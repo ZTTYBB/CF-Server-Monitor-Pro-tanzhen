@@ -1802,12 +1802,15 @@ LOOP_COUNT=0
 IPV4="0"; IPV6="0"
 PING_CT="0"; PING_CU="0"; PING_CM="0"; PING_BD="0"
 
-REPORT_INTERVAL="${reportInterval}"
+REPORT_INTERVAL=180
 PING_NODE_CT="${pingCt}"; PING_NODE_CU="${pingCu}"; PING_NODE_CM="${pingCm}"
 
+HEARTBEAT_INTERVAL=120
 LAST_CONFIG_TIME=0
 LAST_REPORT_TIME=0
+LAST_PING_TIME=0
 PREV_CPU_VAL=0; PREV_RAM_VAL=0; PREV_DISK_VAL=0
+PREV_RX_SPEED=0; PREV_TX_SPEED=0
 PREV_V4_STATE="X"; PREV_V6_STATE="X"
 
 while true; do
@@ -1888,21 +1891,23 @@ while true; do
   RX_NOW=\\$(echo \\$NET_STAT | awk '{print \\$1}')
   TX_NOW=\\$(echo \\$NET_STAT | awk '{print \\$2}')
   
-  RX_SPEED=\\$(((RX_NOW - RX_PREV) / 5))
-  TX_SPEED=\\$(((TX_NOW - TX_PREV) / 5))
+  RX_SPEED=\\$(((RX_NOW - RX_PREV) / 3))
+  TX_SPEED=\\$(((TX_NOW - TX_PREV) / 3))
   RX_PREV=\\$RX_NOW; TX_PREV=\\$TX_NOW
 
   NEED_REPORT=0
   
   if [ \\$((NOW - LAST_REPORT_TIME)) -ge \\$REPORT_INTERVAL ]; then NEED_REPORT=1; fi
   
-  CPU_DIFF=\\$(awk "BEGIN {d=\\$CPU-\\$PREV_CPU_VAL; print (d<0?-d:d)}")
-  RAM_DIFF=\\$(awk "BEGIN {d=\\$RAM-\\$PREV_RAM_VAL; print (d<0?-d:d)}")
-  DISK_DIFF=\\$(awk "BEGIN {d=\\$DISK-\\$PREV_DISK_VAL; print (d<0?-d:d)}")
+  RX_DIFF=\\$(awk "BEGIN {d=\\$RX_SPEED-\\$PREV_RX_SPEED; d=d<0?-d:d; p=\\$PREV_RX_SPEED==0?1:d/\\$PREV_RX_SPEED; print (d>307200 && p>0.3)?1:0}")
+  TX_DIFF=\\$(awk "BEGIN {d=\\$TX_SPEED-\$PREV_TX_SPEED; d=d<0?-d:d; p=\\$PREV_TX_SPEED==0?1:d/\\$PREV_TX_SPEED; print (d>307200 && p>0.3)?1:0}")
+  if [ "\\$RX_DIFF" -eq 1 ] || [ "\\$TX_DIFF" -eq 1 ]; then NEED_REPORT=1; fi
+
+  CPU_DIFF=\\$(awk "BEGIN {d=\\$CPU-\\$PREV_CPU_VAL; print (d<0?-d:d > 10.0)?1:0}")
+  RAM_DIFF=\\$(awk "BEGIN {d=\\$RAM-\\$PREV_RAM_VAL; print (d<0?-d:d > 5.0)?1:0}")
+  DISK_DIFF=\\$(awk "BEGIN {d=\\$DISK-\\$PREV_DISK_VAL; print (d<0?-d:d > 1.0)?1:0}")
   
-  if [ \\$(awk "BEGIN {print (\\$CPU_DIFF > 10.0 ? 1 : 0)}") -eq 1 ]; then NEED_REPORT=1; fi
-  if [ \\$(awk "BEGIN {print (\\$RAM_DIFF > 10.0 ? 1 : 0)}") -eq 1 ]; then NEED_REPORT=1; fi
-  if [ \\$(awk "BEGIN {print (\\$DISK_DIFF > 10.0 ? 1 : 0)}") -eq 1 ]; then NEED_REPORT=1; fi
+  if [ "\\$CPU_DIFF" -eq 1 ] || [ "\\$RAM_DIFF" -eq 1 ] || [ "\\$DISK_DIFF" -eq 1 ]; then NEED_REPORT=1; fi
   if [ "\\$IPV4" != "\\$PREV_V4_STATE" ] || [ "\\$IPV6" != "\\$PREV_V6_STATE" ]; then NEED_REPORT=1; fi
 
   if [ \\$NEED_REPORT -eq 1 ]; then
@@ -1911,15 +1916,17 @@ while true; do
     ${cmdApp} -s -X POST -H "Content-Type: application/json" -d "\\$PAYLOAD" "\\$WORKER_URL" > /dev/null 2>&1
     
     LAST_REPORT_TIME=\\$NOW
+    LAST_PING_TIME=\\$NOW
     PREV_CPU_VAL=\\$CPU; PREV_RAM_VAL=\\$RAM; PREV_DISK_VAL=\\$DISK
+    PREV_RX_SPEED=\\$RX_SPEED; PREV_TX_SPEED=\\$TX_SPEED
     PREV_V4_STATE=\\$IPV4; PREV_V6_STATE=\\$IPV6
-  elif [ \\$((NOW - LAST_REPORT_TIME)) -ge 180 ]; then
+  elif [ \\$((NOW - LAST_PING_TIME)) -ge \\$HEARTBEAT_INTERVAL ]; then
     PAYLOAD="{\\"id\\": \\"\\$SERVER_ID\\", \\"secret\\": \\"\\$SECRET\\", \\"type\\": \\"ping\\"}"
     ${cmdApp} -s -X POST -H "Content-Type: application/json" -d "\\$PAYLOAD" "\\$WORKER_URL" > /dev/null 2>&1
-    LAST_REPORT_TIME=\\$NOW
+    LAST_PING_TIME=\\$NOW
   fi
 
-  sleep 5
+  sleep 3
 done
 EOF
 chmod +x /usr/local/bin/cf-probe.sh
