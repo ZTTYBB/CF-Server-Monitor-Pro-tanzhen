@@ -346,696 +346,23 @@ export default {
         }
       }
 
-      // 这里完全保留原始提供的所有节点数据
-      const rawNodeDataV4 = `陕西西安移动
-sn-xian-cm-v4.ip.zstaticcdn.com:443
-江苏无锡移动
-js-wuxi-cm-v4.ip.zstaticcdn.com:443
-山东济南移动
-sd-jinan-cm-v4.ip.zstaticcdn.com:443
-江苏苏州移动
-js-suzhou-cm-v4.ip.zstaticcdn.com:443
-浙江宁波移动
-zj-ningbo-cm-v4.ip.zstaticcdn.com:443
-广东东莞移动
-gd-dongguan-cm-v4.ip.zstaticcdn.com:443
-四川成都移动
-sc-chengdu-cm-v4.ip.zstaticcdn.com:443
-贵州贵阳移动
-gz-guiyang-cm-v4.ip.zstaticcdn.com:443
-湖南株洲移动
-hn-zhuzhou-cm-v4.ip.zstaticcdn.com:443
-河南郑州移动
-ha-zhengzhou-cm-v4.ip.zstaticcdn.com:443
-内蒙古呼和浩特移动
-nm-huhehaote-cm-v4.ip.zstaticcdn.com:443
-广东广州移动
-gd-guangzhou-cm-v4.ip.zstaticcdn.com:443
-福建厦门联通
-fj-xiamen-cu-v4.ip.zstaticcdn.com:443
-福建宁德联通
-fj-ningde-cu-v4.ip.zstaticcdn.com:443
-福建南平联通
-fj-nanping-cu-v4.ip.zstaticcdn.com:443
-河北廊坊联通
-he-langfang-cu-v4.ip.zstaticcdn.com:443
-贵州贵阳联通
-gz-guiyang-cu-v4.ip.zstaticcdn.com:443
-内蒙古呼和浩特联通
-nm-huhehaote-cu-v4.ip.zstaticcdn.com:443
-湖南郴州电信
-hn-chenzhou-ct-v4.ip.zstaticcdn.com:443
-浙江杭州电信
-zj-hangzhou-ct-v4.ip.zstaticcdn.com:443
-海南海口电信
-hi-haikou-ct-v4.ip.zstaticcdn.com:443
-湖北武汉电信
-hb-wuhan-ct-v4.ip.zstaticcdn.com:443
-甘肃兰州电信
-gs-lanzhou-ct-v4.ip.zstaticcdn.com:443
-江苏南京电信
-js-nanjing-ct-v4.ip.zstaticcdn.com:443
-陕西西安电信
-sn-xian-ct-v4.ip.zstaticcdn.com:443
-广东广州电信
-gd-guangzhou-ct-v4.ip.zstaticcdn.com:443
-辽宁辽阳电信
-ln-liaoyang-ct-v4.ip.zstaticcdn.com:443
-山东青岛电信
-sd-qingdao-ct-v4.ip.zstaticcdn.com:443
-福建福州电信
-fj-fuzhou-ct-v4.ip.zstaticcdn.com:443
-新疆乌鲁木齐电信
-xj-wulumuqi-ct-v4.ip.zstaticcdn.com:443
-湖南长沙电信
-hn-changsha-ct-v4.ip.zstaticcdn.com:443
-甘肃中卫电信
-gs-zhongwei-ct-v4.ip.zstaticcdn.com:443
-山西太原电信
-sx-taiyuan-ct-v4.ip.zstaticcdn.com:443
-安徽芜湖电信
-ah-wuhu-ct-v4.ip.zstaticcdn.com:443
-河南郑州电信
-ha-zhengzhou-ct-v4.ip.zstaticcdn.com:443
-甘肃庆阳电信
-gs-qingyang-ct-v4.ip.zstaticcdn.com:443
-内蒙古呼和浩特电信
-nm-huhehaote-ct-v4.ip.zstaticcdn.com:443
-湖北孝感电信
-hb-xiaogan-ct-v4.ip.zstaticcdn.com:443
-湖北宜昌电信
-hb-yichang-ct-v4.ip.zstaticcdn.com:443
-湖南怀化电信
-hn-huaihua-ct-v4.ip.zstaticcdn.com:443
-广东深圳电信
-gd-shenzhen-ct-v4.ip.zstaticcdn.com:443
-广东揭阳电信
-gd-jieyang-ct-v4.ip.zstaticcdn.com:443
-浙江台州电信
-zj-taizhou-ct-v4.ip.zstaticcdn.com:443
-西藏拉萨电信
-xz-lasa-ct-v4.ip.zstaticcdn.com:443
-湖南永州电信
-hn-yongzhou-ct-v4.ip.zstaticcdn.com:443
-江苏苏州电信
-js-suzhou-ct-v4.ip.zstaticcdn.com:443
-江苏镇江电信
-js-zhenjiang-ct-v4.ip.zstaticcdn.com:443
-河北雄安电信
-he-xiongan-ct-v4.ip.zstaticcdn.com:443
-湖南株洲电信
-hn-zhuzhou-ct-v4.ip.zstaticcdn.com:443
-湖北襄阳电信
-hb-xiangyang-ct-v4.ip.zstaticcdn.com:443
-江苏南京联通
-js-nanjing-cu-v4.ip.zstaticcdn.com:443
-江苏南京移动
-js-nanjing-cm-v4.ip.zstaticcdn.com:443
-安徽合肥移动
-ah-hefei-cm-v4.ip.zstaticcdn.com:443
-安徽合肥电信
-ah-hefei-ct-v4.ip.zstaticcdn.com:443
-安徽合肥联通
-ah-hefei-cu-v4.ip.zstaticcdn.com:443
-广东东莞联通
-gd-dongguan-cu-v4.ip.zstaticcdn.com:443
-湖南长沙联通
-hn-changsha-cu-v4.ip.zstaticcdn.com:443
-河南洛阳联通
-ha-luoyang-cu-v4.ip.zstaticcdn.com:443
-吉林长春联通
-jl-changchun-cu-v4.ip.zstaticcdn.com:443
-江苏台州联通
-js-taizhou-cu-v4.ip.zstaticcdn.com:443
-陕西咸阳联通
-sn-xianyang-cu-v4.ip.zstaticcdn.com:443
-陕西安康联通
-sn-ankang-cu-v4.ip.zstaticcdn.com:443
-陕西渭南联通
-sn-weinan-cu-v4.ip.zstaticcdn.com:443
-广东广州联通
-gd-guangzhou-cu-v4.ip.zstaticcdn.com:443
-安徽安庆联通
-ah-anqing-cu-v4.ip.zstaticcdn.com:443
-安徽蚌埠联通
-ah-bengbu-cu-v4.ip.zstaticcdn.com:443
-安徽亳州联通
-ah-bozhou-cu-v4.ip.zstaticcdn.com:443
-安徽宿州联通
-ah-suzhou-cu-v4.ip.zstaticcdn.com:443
-福建龙岩联通
-fj-longyan-cu-v4.ip.zstaticcdn.com:443
-福建莆田联通
-fj-putian-cu-v4.ip.zstaticcdn.com:443
-福建泉州联通
-fj-quanzhou-cu-v4.ip.zstaticcdn.com:443
-福建三明联通
-fj-sanming-cu-v4.ip.zstaticcdn.com:443
-福建漳州联通
-fj-zhangzhou-cu-v4.ip.zstaticcdn.com:443
-广东潮州联通
-gd-chaozhou-cu-v4.ip.zstaticcdn.com:443
-广东佛山联通
-gd-foshan-cu-v4.ip.zstaticcdn.com:443
-广东河源联通
-gd-heyuan-cu-v4.ip.zstaticcdn.com:443
-广东惠州联通
-gd-huizhou-cu-v4.ip.zstaticcdn.com:443
-广东江门联通
-gd-jiangmen-cu-v4.ip.zstaticcdn.com:443
-广东茂名联通
-gd-maoming-cu-v4.ip.zstaticcdn.com:443
-广东汕头联通
-gd-shantou-cu-v4.ip.zstaticcdn.com:443
-广东汕尾联通
-gd-shanwei-cu-v4.ip.zstaticcdn.com:443
-广东韶关联通
-gd-shaoguan-cu-v4.ip.zstaticcdn.com:443
-广东阳江联通
-gd-yangjiang-cu-v4.ip.zstaticcdn.com:443
-广东云浮联通
-gd-yunfu-cu-v4.ip.zstaticcdn.com:443
-广东湛江联通
-gd-zhanjiang-cu-v4.ip.zstaticcdn.com:443
-广东肇庆联通
-gd-zhaoqing-cu-v4.ip.zstaticcdn.com:443
-广东中山联通
-gd-zhongshan-cu-v4.ip.zstaticcdn.com:443
-广东珠海联通
-gd-zhuhai-cu-v4.ip.zstaticcdn.com:443
-广西桂林联通
-gx-guilin-cu-v4.ip.zstaticcdn.com:443
-广西柳州联通
-gx-liuzhou-cu-v4.ip.zstaticcdn.com:443
-广西南宁联通
-gx-nanning-cu-v4.ip.zstaticcdn.com:443
-河南安阳联通
-ha-anyang-cu-v4.ip.zstaticcdn.com:443
-河南鹤壁联通
-ha-hebi-cu-v4.ip.zstaticcdn.com:443
-河南焦作联通
-ha-jiaozuo-cu-v4.ip.zstaticcdn.com:443
-河南济源联通
-ha-jiyuan-cu-v4.ip.zstaticcdn.com:443
-河南开封联通
-ha-kaifeng-cu-v4.ip.zstaticcdn.com:443
-河南漯河联通
-ha-luohe-cu-v4.ip.zstaticcdn.com:443
-河南南阳联通
-ha-nanyang-cu-v4.ip.zstaticcdn.com:443
-河南平顶山联通
-ha-pingdingshan-cu-v4.ip.zstaticcdn.com:443
-河南三门峡联通
-ha-sanmenxia-cu-v4.ip.zstaticcdn.com:443
-河南商丘联通
-ha-shangqiu-cu-v4.ip.zstaticcdn.com:443
-河南新乡联通
-ha-xinxiang-cu-v4.ip.zstaticcdn.com:443
-河南信阳联通
-ha-xinyang-cu-v4.ip.zstaticcdn.com:443
-河南许昌联通
-ha-xuchang-cu-v4.ip.zstaticcdn.com:443
-河南周口联通
-ha-zhoukou-cu-v4.ip.zstaticcdn.com:443
-河南驻马店联通
-ha-zhumadian-cu-v4.ip.zstaticcdn.com:443
-湖北鄂州联通
-hb-ezhou-cu-v4.ip.zstaticcdn.com:443
-湖北黄冈联通
-hb-huanggang-cu-v4.ip.zstaticcdn.com:443
-湖北黄石联通
-hb-huangshi-cu-v4.ip.zstaticcdn.com:443
-湖北荆门联通
-hb-jingmen-cu-v4.ip.zstaticcdn.com:443
-湖北荆州联通
-hb-jingzhou-cu-v4.ip.zstaticcdn.com:443
-湖北十堰联通
-hb-shiyan-cu-v4.ip.zstaticcdn.com:443
-湖北随州联通
-hb-suizhou-cu-v4.ip.zstaticcdn.com:443
-河北保定联通
-he-baoding-cu-v4.ip.zstaticcdn.com:443
-河北沧州联通
-he-cangzhou-cu-v4.ip.zstaticcdn.com:443
-河北承德联通
-he-chengde-cu-v4.ip.zstaticcdn.com:443
-河北邯郸联通
-he-handan-cu-v4.ip.zstaticcdn.com:443
-河北衡水联通
-he-hengshui-cu-v4.ip.zstaticcdn.com:443
-河北石家庄联通
-he-shijiazhuang-cu-v4.ip.zstaticcdn.com:443
-河北唐山联通
-he-tangshan-cu-v4.ip.zstaticcdn.com:443
-河北邢台联通
-he-xingtai-cu-v4.ip.zstaticcdn.com:443
-黑龙江大庆联通
-hl-daqing-cu-v4.ip.zstaticcdn.com:443
-黑龙江大兴安岭联通
-hl-daxinganling-cu-v4.ip.zstaticcdn.com:443
-黑龙江哈尔滨联通
-hl-haerbin-cu-v4.ip.zstaticcdn.com:443
-黑龙江鹤岗联通
-hl-hegang-cu-v4.ip.zstaticcdn.com:443
-黑龙江黑河联通
-hl-heihe-cu-v4.ip.zstaticcdn.com:443
-黑龙江佳木斯联通
-hl-jiamusi-cu-v4.ip.zstaticcdn.com:443
-黑龙江鸡西联通
-hl-jixi-cu-v4.ip.zstaticcdn.com:443
-黑龙江牡丹江联通
-hl-mudanjiang-cu-v4.ip.zstaticcdn.com:443
-黑龙江齐齐哈尔联通
-hl-qiqihaer-cu-v4.ip.zstaticcdn.com:443
-黑龙江七台河联通
-hl-qitaihe-cu-v4.ip.zstaticcdn.com:443
-黑龙江双鸭山联通
-hl-shuangyashan-cu-v4.ip.zstaticcdn.com:443
-黑龙江绥化联通
-hl-suihua-cu-v4.ip.zstaticcdn.com:443
-黑龙江伊春联通
-hl-yichun-cu-v4.ip.zstaticcdn.com:443
-湖南衡阳联通
-hn-hengyang-cu-v4.ip.zstaticcdn.com:443
-湖南娄底联通
-hn-loudi-cu-v4.ip.zstaticcdn.com:443
-湖南邵阳联通
-hn-shaoyang-cu-v4.ip.zstaticcdn.com:443
-湖南湘潭联通
-hn-xiangtan-cu-v4.ip.zstaticcdn.com:443
-湖南湘西联通
-hn-xiangxi-cu-v4.ip.zstaticcdn.com:443
-湖南张家界联通
-hn-zhangjiajie-cu-v4.ip.zstaticcdn.com:443
-吉林吉林联通
-jl-jilin-cu-v4.ip.zstaticcdn.com:443
-吉林四平联通
-jl-siping-cu-v4.ip.zstaticcdn.com:443
-吉林松原联通
-jl-songyuan-cu-v4.ip.zstaticcdn.com:443
-吉林通化联通
-jl-tonghua-cu-v4.ip.zstaticcdn.com:443
-江苏连云港联通
-js-lianyungang-cu-v4.ip.zstaticcdn.com:443
-江苏南通联通
-js-nantong-cu-v4.ip.zstaticcdn.com:443
-江苏徐州联通
-js-xuzhou-cu-v4.ip.zstaticcdn.com:443
-江苏盐城联通
-js-yancheng-cu-v4.ip.zstaticcdn.com:443
-江苏扬州联通
-js-yangzhou-cu-v4.ip.zstaticcdn.com:443
-江西抚州联通
-jx-fuzhou-cu-v4.ip.zstaticcdn.com:443
-江西吉安联通
-jx-jian-cu-v4.ip.zstaticcdn.com:443
-江西景德镇联通
-jx-jingdezhen-cu-v4.ip.zstaticcdn.com:443
-江西九江联通
-jx-jiujiang-cu-v4.ip.zstaticcdn.com:443
-江西南昌联通
-jx-nanchang-cu-v4.ip.zstaticcdn.com:443
-江西上饶联通
-jx-shangrao-cu-v4.ip.zstaticcdn.com:443
-江西新余联通
-jx-xinyu-cu-v4.ip.zstaticcdn.com:443
-江西宜春联通
-jx-yichun-cu-v4.ip.zstaticcdn.com:443
-江西鹰潭联通
-jx-yingtan-cu-v4.ip.zstaticcdn.com:443
-辽宁朝阳联通
-ln-chaoyang-cu-v4.ip.zstaticcdn.com:443
-辽宁大连联通
-ln-dalian-cu-v4.ip.zstaticcdn.com:443
-辽宁丹东联通
-ln-dandong-cu-v4.ip.zstaticcdn.com:443
-辽宁抚顺联通
-ln-fushun-cu-v4.ip.zstaticcdn.com:443
-辽宁阜新联通
-ln-fuxin-cu-v4.ip.zstaticcdn.com:443
-辽宁葫芦岛联通
-ln-huludao-cu-v4.ip.zstaticcdn.com:443
-辽宁锦州联通
-ln-jinzhou-cu-v4.ip.zstaticcdn.com:443
-辽宁沈阳联通
-ln-shenyang-cu-v4.ip.zstaticcdn.com:443
-辽宁铁岭联通
-ln-tieling-cu-v4.ip.zstaticcdn.com:443
-辽宁营口联通
-ln-yingkou-cu-v4.ip.zstaticcdn.com:443
-内蒙古包头联通
-nm-baotou-cu-v4.ip.zstaticcdn.com:443
-内蒙古巴彦淖尔联通
-nm-bayannaoer-cu-v4.ip.zstaticcdn.com:443
-内蒙古赤峰联通
-nm-chifeng-cu-v4.ip.zstaticcdn.com:443
-内蒙古呼伦贝尔联通
-nm-hulunbeier-cu-v4.ip.zstaticcdn.com:443
-内蒙古通辽联通
-nm-tongliao-cu-v4.ip.zstaticcdn.com:443
-内蒙古乌海联通
-nm-wuhai-cu-v4.ip.zstaticcdn.com:443
-内蒙古乌兰察布联通
-nm-wulanchabu-cu-v4.ip.zstaticcdn.com:443
-内蒙古锡林郭勒联通
-nm-xilinguole-cu-v4.ip.zstaticcdn.com:443
-内蒙古兴安联通
-nm-xingan-cu-v4.ip.zstaticcdn.com:443
-宁夏银川联通
-nx-yinchuan-cu-v4.ip.zstaticcdn.com:443
-青海西宁联通
-qh-xining-cu-v4.ip.zstaticcdn.com:443
-四川达州联通
-sc-dazhou-cu-v4.ip.zstaticcdn.com:443
-四川乐山联通
-sc-leshan-cu-v4.ip.zstaticcdn.com:443
-四川凉山联通
-sc-liangshan-cu-v4.ip.zstaticcdn.com:443
-四川泸州联通
-sc-luzhou-cu-v4.ip.zstaticcdn.com:443
-四川绵阳联通
-sc-mianyang-cu-v4.ip.zstaticcdn.com:443
-四川内江联通
-sc-neijiang-cu-v4.ip.zstaticcdn.com:443
-四川资阳联通
-sc-ziyang-cu-v4.ip.zstaticcdn.com:443
-山东滨州联通
-sd-binzhou-cu-v4.ip.zstaticcdn.com:443
-山东东营联通
-sd-dongying-cu-v4.ip.zstaticcdn.com:443
-山东菏泽联通
-sd-heze-cu-v4.ip.zstaticcdn.com:443
-山东济宁联通
-sd-jining-cu-v4.ip.zstaticcdn.com:443
-山东临沂联通
-sd-linyi-cu-v4.ip.zstaticcdn.com:443
-山东泰安联通
-sd-taian-cu-v4.ip.zstaticcdn.com:443
-山东潍坊联通
-sd-weifang-cu-v4.ip.zstaticcdn.com:443
-山东威海联通
-sd-weihai-cu-v4.ip.zstaticcdn.com:443
-山东烟台联通
-sd-yantai-cu-v4.ip.zstaticcdn.com:443
-山东枣庄联通
-sd-zaozhuang-cu-v4.ip.zstaticcdn.com:443
-山东淄博联通
-sd-zibo-cu-v4.ip.zstaticcdn.com:443
-陕西宝鸡联通
-sn-baoji-cu-v4.ip.zstaticcdn.com:443
-陕西商洛联通
-sn-shangluo-cu-v4.ip.zstaticcdn.com:443
-陕西榆林联通
-sn-yulin-cu-v4.ip.zstaticcdn.com:443
-山西长治联通
-sx-changzhi-cu-v4.ip.zstaticcdn.com:443
-山西晋中联通
-sx-jinzhong-cu-v4.ip.zstaticcdn.com:443
-山西临汾联通
-sx-linfen-cu-v4.ip.zstaticcdn.com:443
-山西吕梁联通
-sx-lvliang-cu-v4.ip.zstaticcdn.com:443
-山西朔州联通
-sx-shuozhou-cu-v4.ip.zstaticcdn.com:443
-山西阳泉联通
-sx-yangquan-cu-v4.ip.zstaticcdn.com:443
-山西运城联通
-sx-yuncheng-cu-v4.ip.zstaticcdn.com:443
-新疆巴音郭楞联通
-xj-bayinguoleng-cu-v4.ip.zstaticcdn.com:443
-新疆哈密联通
-xj-hami-cu-v4.ip.zstaticcdn.com:443
-新疆和田联通
-xj-hetian-cu-v4.ip.zstaticcdn.com:443
-新疆石河子联通
-xj-shihezi-cu-v4.ip.zstaticcdn.com:443
-新疆吐鲁番联通
-xj-tulufan-cu-v4.ip.zstaticcdn.com:443
-云南德宏联通
-yn-dehong-cu-v4.ip.zstaticcdn.com:443
-云南昆明联通
-yn-kunming-cu-v4.ip.zstaticcdn.com:443
-云南普洱联通
-yn-puer-cu-v4.ip.zstaticcdn.com:443
-云南曲靖联通
-yn-qujing-cu-v4.ip.zstaticcdn.com:443
-云南西双版纳联通
-yn-xishuangbanna-cu-v4.ip.zstaticcdn.com:443
-浙江湖州联通
-zj-huzhou-cu-v4.ip.zstaticcdn.com:443
-浙江嘉兴联通
-zj-jiaxing-cu-v4.ip.zstaticcdn.com:443
-浙江金华联通
-zj-jinhua-cu-v4.ip.zstaticcdn.com:443
-浙江丽水联通
-zj-lishui-cu-v4.ip.zstaticcdn.com:443
-浙江绍兴联通
-zj-shaoxing-cu-v4.ip.zstaticcdn.com:443
-浙江温州联通
-zj-wenzhou-cu-v4.ip.zstaticcdn.com:443`;
-
-      const rawNodeDataDual = `河北
-河北移动
-he-cm-dualstack.ip.zstaticcdn.com:80
-河北联通
-he-cu-dualstack.ip.zstaticcdn.com:80
-河北电信
-he-ct-dualstack.ip.zstaticcdn.com:80
-山西
-山西移动
-sx-cm-dualstack.ip.zstaticcdn.com:80
-山西联通
-sx-cu-dualstack.ip.zstaticcdn.com:80
-山西电信
-sx-ct-dualstack.ip.zstaticcdn.com:80
-辽宁
-辽宁移动
-ln-cm-dualstack.ip.zstaticcdn.com:80
-辽宁联通
-ln-cu-dualstack.ip.zstaticcdn.com:80
-辽宁电信
-ln-ct-dualstack.ip.zstaticcdn.com:80
-吉林
-吉林移动
-jl-cm-dualstack.ip.zstaticcdn.com:80
-吉林联通
-jl-cu-dualstack.ip.zstaticcdn.com:80
-吉林电信
-jl-ct-dualstack.ip.zstaticcdn.com:80
-黑龙江
-黑龙江移动
-hl-cm-dualstack.ip.zstaticcdn.com:80
-黑龙江联通
-hl-cu-dualstack.ip.zstaticcdn.com:80
-黑龙江电信
-hl-ct-dualstack.ip.zstaticcdn.com:80
-江苏
-江苏移动
-js-cm-dualstack.ip.zstaticcdn.com:80
-江苏联通
-js-cu-dualstack.ip.zstaticcdn.com:80
-江苏电信
-js-ct-dualstack.ip.zstaticcdn.com:80
-浙江
-浙江移动
-zj-cm-dualstack.ip.zstaticcdn.com:80
-浙江联通
-zj-cu-dualstack.ip.zstaticcdn.com:80
-浙江电信
-zj-ct-dualstack.ip.zstaticcdn.com:80
-安徽
-安徽移动
-ah-cm-dualstack.ip.zstaticcdn.com:80
-安徽联通
-ah-cu-dualstack.ip.zstaticcdn.com:80
-安徽电信
-ah-ct-dualstack.ip.zstaticcdn.com:80
-福建
-福建移动
-fj-cm-dualstack.ip.zstaticcdn.com:80
-福建联通
-fj-cu-dualstack.ip.zstaticcdn.com:80
-福建电信
-fj-ct-dualstack.ip.zstaticcdn.com:80
-江西
-江西移动
-jx-cm-dualstack.ip.zstaticcdn.com:80
-江西联通
-jx-cu-dualstack.ip.zstaticcdn.com:80
-江西电信
-jx-ct-dualstack.ip.zstaticcdn.com:80
-山东
-山东移动
-sd-cm-dualstack.ip.zstaticcdn.com:80
-山东联通
-sd-cu-dualstack.ip.zstaticcdn.com:80
-山东电信
-sd-ct-dualstack.ip.zstaticcdn.com:80
-河南
-河南移动
-ha-cm-dualstack.ip.zstaticcdn.com:80
-河南联通
-ha-cu-dualstack.ip.zstaticcdn.com:80
-河南电信
-ha-ct-dualstack.ip.zstaticcdn.com:80
-湖北
-湖北移动
-hb-cm-dualstack.ip.zstaticcdn.com:80
-湖北联通
-hb-cu-dualstack.ip.zstaticcdn.com:80
-湖北电信
-hb-ct-dualstack.ip.zstaticcdn.com:80
-湖南
-湖南移动
-hn-cm-dualstack.ip.zstaticcdn.com:80
-湖南联通
-hn-cu-dualstack.ip.zstaticcdn.com:80
-湖南电信
-hn-ct-dualstack.ip.zstaticcdn.com:80
-广东
-广东移动
-gd-cm-dualstack.ip.zstaticcdn.com:80
-广东联通
-gd-cu-dualstack.ip.zstaticcdn.com:80
-广东电信
-gd-ct-dualstack.ip.zstaticcdn.com:80
-海南
-海南移动
-hi-cm-dualstack.ip.zstaticcdn.com:80
-海南联通
-hi-cu-dualstack.ip.zstaticcdn.com:80
-海南电信
-hi-ct-dualstack.ip.zstaticcdn.com:80
-四川
-四川移动
-sc-cm-dualstack.ip.zstaticcdn.com:80
-四川联通
-sc-cu-dualstack.ip.zstaticcdn.com:80
-四川电信
-sc-ct-dualstack.ip.zstaticcdn.com:80
-贵州
-贵州移动
-gz-cm-dualstack.ip.zstaticcdn.com:80
-贵州联通
-gz-cu-dualstack.ip.zstaticcdn.com:80
-贵州电信
-gz-ct-dualstack.ip.zstaticcdn.com:80
-云南
-云南移动
-yn-cm-dualstack.ip.zstaticcdn.com:80
-云南联通
-yn-cu-dualstack.ip.zstaticcdn.com:80
-云南电信
-yn-ct-dualstack.ip.zstaticcdn.com:80
-陕西
-陕西移动
-sn-cm-dualstack.ip.zstaticcdn.com:80
-陕西联通
-sn-cu-dualstack.ip.zstaticcdn.com:80
-陕西电信
-sn-ct-dualstack.ip.zstaticcdn.com:80
-甘肃
-甘肃移动
-gs-cm-dualstack.ip.zstaticcdn.com:80
-甘肃联通
-gs-cu-dualstack.ip.zstaticcdn.com:80
-甘肃电信
-gs-ct-dualstack.ip.zstaticcdn.com:80
-青海
-青海移动
-qh-cm-dualstack.ip.zstaticcdn.com:80
-青海联通
-qh-cu-dualstack.ip.zstaticcdn.com:80
-青海电信
-qh-ct-dualstack.ip.zstaticcdn.com:80
-内蒙古
-内蒙古移动
-nm-cm-dualstack.ip.zstaticcdn.com:80
-内蒙古联通
-nm-cu-dualstack.ip.zstaticcdn.com:80
-内蒙古电信
-nm-ct-dualstack.ip.zstaticcdn.com:80
-广西
-广西移动
-gx-cm-dualstack.ip.zstaticcdn.com:80
-广西联通
-gx-cu-dualstack.ip.zstaticcdn.com:80
-广西电信
-gx-ct-dualstack.ip.zstaticcdn.com:80
-西藏
-西藏移动
-xz-cm-dualstack.ip.zstaticcdn.com:80
-西藏联通
-xz-cu-dualstack.ip.zstaticcdn.com:80
-西藏电信
-xz-ct-dualstack.ip.zstaticcdn.com:80
-宁夏
-宁夏移动
-nx-cm-dualstack.ip.zstaticcdn.com:80
-宁夏联通
-nx-cu-dualstack.ip.zstaticcdn.com:80
-宁夏电信
-nx-ct-dualstack.ip.zstaticcdn.com:80
-新疆
-新疆移动
-xj-cm-dualstack.ip.zstaticcdn.com:80
-新疆联通
-xj-cu-dualstack.ip.zstaticcdn.com:80
-新疆电信
-xj-ct-dualstack.ip.zstaticcdn.com:80
-北京
-北京移动
-bj-cm-dualstack.ip.zstaticcdn.com:80
-北京联通
-bj-cu-dualstack.ip.zstaticcdn.com:80
-北京电信
-bj-ct-dualstack.ip.zstaticcdn.com:80
-天津
-天津移动
-tj-cm-dualstack.ip.zstaticcdn.com:80
-天津联通
-tj-cu-dualstack.ip.zstaticcdn.com:80
-天津电信
-tj-ct-dualstack.ip.zstaticcdn.com:80
-上海
-上海移动
-sh-cm-dualstack.ip.zstaticcdn.com:80
-上海联通
-sh-cu-dualstack.ip.zstaticcdn.com:80
-上海电信
-sh-ct-dualstack.ip.zstaticcdn.com:80
-重庆
-重庆移动
-cq-cm-dualstack.ip.zstaticcdn.com:80
-重庆联通
-cq-cu-dualstack.ip.zstaticcdn.com:80
-重庆电信
-cq-ct-dualstack.ip.zstaticcdn.com:80`;
-
-      const pingOpts = { ct: [], cu: [], cm: [] };
-      
-      const parseNodes = (rawText, label) => {
-        const lines = rawText.split('\n').map(l => l.trim()).filter(l => l);
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          if (line.includes('移动') || line.includes('联通') || line.includes('电信')) {
-            const name = `${line} (${label})`;
-            const host = (lines[i+1] || '').split(':')[0]; 
-            if (line.includes('电信')) pingOpts.ct.push({name, host});
-            else if (line.includes('联通')) pingOpts.cu.push({name, host});
-            else if (line.includes('移动')) pingOpts.cm.push({name, host});
-            i++; 
-          }
+      let pingOpts = { ct: [], cu: [], cm: [] };
+      try {
+        const nodesRes = await fetch('https://raw.githubusercontent.com/a63414262/CF-Server-Monitor-Pro/refs/heads/main/nodes.json');
+        if (nodesRes.ok) {
+          const nodesData = await nodesRes.json();
+          if (nodesData.ct) pingOpts.ct = nodesData.ct;
+          if (nodesData.cu) pingOpts.cu = nodesData.cu;
+          if (nodesData.cm) pingOpts.cm = nodesData.cm;
         }
-      };
-
-      parseNodes(rawNodeDataV4, 'IPv4');
-      parseNodes(rawNodeDataDual, '双栈');
+      } catch (e) {
+        console.error('动态拉取节点 JSON 失败:', e);
+      }
 
       const buildOpts = (group, selectedVal) => {
           let opts = `<option value="default" ${selectedVal === 'default' ? 'selected' : ''}>默认节点 (双栈多节点轮询)</option>`;
           group.forEach(n => {
-             opts += `<option value="${n.host}" ${selectedVal === n.host ? 'selected' : ''}>${n.name}</option>`;
+              opts += `<option value="${n.host}" ${selectedVal === n.host ? 'selected' : ''}>${n.name}</option>`;
           });
           return opts;
       };
@@ -1164,12 +491,12 @@ cq-ct-dualstack.ip.zstaticcdn.com:80`;
               
               <div class="checkbox-group" style="margin-top: 10px;">
                 <input type="checkbox" id="cfg_enable_ranking" onchange="toggleRankingApi()" ${sys.enable_ranking === 'true' ? 'checked' : ''}>
-                <label for="cfg_enable_ranking">在前台显示 <b>全网排名</b> (需配置中心化排行榜API)</label>
+                <label for="cfg_enable_ranking">开启前台 <b>全网排名 UI 组件</b></label>
               </div>
               <div class="form-group" id="ranking_api_group" style="display: ${sys.enable_ranking === 'true' ? 'block' : 'none'}; margin-left: 28px; margin-top: -5px; margin-bottom: 15px;">
-                <label style="font-size: 12px;">排行中心 API 地址</label>
+                <label style="font-size: 12px;">排行聚合中心 API 地址 (留空则仅展示本地排名)</label>
                 <input type="text" id="cfg_ranking_api" value="${sys.ranking_api || ''}" placeholder="如: https://api.yoursite.com/rank" style="width: 250px; padding: 6px;">
-                <span style="font-size:12px; color:#888;">* Worker隔离限制，需外部API汇总所有人数据，提供服务器与资产排名响应。</span>
+                <span style="font-size:12px; color:#888;">* Worker 彼此物理隔离，真正的全网排名必须依赖中心化 KV 汇总 API。填写 API 接入互联，留空则展示当前实例本地总额。</span>
               </div>
 
               <hr style="margin: 20px 0; border: none; border-top: 1px dashed #ccc;">
@@ -1191,7 +518,7 @@ cq-ct-dualstack.ip.zstaticcdn.com:80`;
               </div>
 
               <hr style="margin: 20px 0; border: none; border-top: 1px dashed #ccc;">
-              <label style="font-size: 14px; font-weight: 600; margin-bottom: 10px; display: block; color: #8b5cf6;">📡 三网延迟测试节点选择</label>
+              <label style="font-size: 14px; font-weight: 600; margin-bottom: 10px; display: block; color: #8b5cf6;">📡 三网延迟测试节点选择 (动态下发更新)</label>
               <div class="form-group">
                 <label>电信 (CT) 测速节点</label>
                 <select id="cfg_ping_node_ct">${buildOpts(pingOpts.ct, sys.ping_node_ct)}</select>
@@ -1204,7 +531,7 @@ cq-ct-dualstack.ip.zstaticcdn.com:80`;
                 <label>移动 (CM) 测速节点</label>
                 <select id="cfg_ping_node_cm">${buildOpts(pingOpts.cm, sys.ping_node_cm)}</select>
                 <span style="font-size:12px; color:#ef4444; margin-top:5px; display:block; font-weight:bold;">* 注意：如果 VPS 的 IPv4 被墙（或网络不通），三网延迟会直接超时，显示为 2000ms（或 2001ms）。</span>
-                <span style="font-size:12px; color:#888; margin-top:5px; display:block;">* 提示：修改节点或上报间隔后无需重启或重装，探针会在下一次心跳（几秒内）自动热更新配置。</span>
+                <span style="font-size:12px; color:#888; margin-top:5px; display:block;">* 提示：修改节点或上报间隔后无需重启或重装，探针会在下一次心跳自动热更新配置。节点列表由 JSON 动态获取。</span>
               </div>
 
             </div>
@@ -1648,7 +975,6 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
 
         last_rx = current_rx; last_tx = current_tx;
 
-        // 提取并更新历史数据
         let history = {};
         try { history = JSON.parse(serverExists.history || '{}'); } catch(e) {}
         
@@ -1778,6 +1104,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
       const viewId = url.searchParams.get('id');
 
       if (viewId) {
+        // ... (保持详情页代码不变，已在上面的原始代码中)
         const server = await env.DB.prepare('SELECT * FROM servers WHERE id = ?').bind(viewId).first();
         if (!server || server.is_hidden === 'true') return new Response('Server not found', { status: 404 });
         
@@ -1998,9 +1325,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
           globalNetTx += tx_val;
           globalNetRx += rx_val;
 
-          // ==========================================
-          // 资产强制转换为 CNY 汇率核心逻辑
-          // ==========================================
+          // 资产转换
           let amount = 0;
           let remValue = 0;
           if (server.price && server.price.match(/[\d.]+/)) {
@@ -2017,11 +1342,10 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
               else if (pUpper.includes('RUB')) rate = 0.078;
               else if (pUpper.includes('CAD')) rate = 5.25;
               else if (pUpper.includes('AUD')) rate = 4.75;
-              // 匹配不到上述单位即默认为原值(当作CNY)
 
               amount = rawAmount * rate;
               
-              let cycleDays = 365; // 默认按年计算
+              let cycleDays = 365;
               const priceStr = server.price.toLowerCase();
               if (priceStr.includes('月') || priceStr.includes('mo') || priceStr.includes('month')) cycleDays = 30;
               else if (priceStr.includes('季') || priceStr.includes('qu')) cycleDays = 90;
@@ -2038,7 +1362,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
               }
               
               if (expDays === -1) {
-                  remValue = amount; // 永久视为满额剩余价值
+                  remValue = amount;
               } else {
                   remValue = (amount / cycleDays) * expDays;
               }
@@ -2060,9 +1384,6 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
         }
       }
 
-      // ==========================================
-      // 生成全网排名的徽章占位符
-      // ==========================================
       let rankHtmlServer = '';
       let rankHtmlAsset = '';
       if (sys.enable_ranking === 'true') {
@@ -2091,8 +1412,8 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
             const cpu = parseFloat(server.cpu || '0').toFixed(1); 
             const ram = parseFloat(server.ram || '0').toFixed(1); 
             const disk = parseFloat(server.disk || '0').toFixed(1);
-            const netInSpeed = formatBytes(server.net_in_speed); 
-            const netOutSpeed = formatBytes(server.net_out_speed);
+            const netInSpeedRaw = parseFloat(server.net_in_speed) || 0;
+            const netOutSpeedRaw = parseFloat(server.net_out_speed) || 0;
             
             const cCode = (server.country || 'xx').toLowerCase();
             const flagHtml = cCode !== 'xx' ? `<img src="https://flagcdn.com/24x18/${cCode}.png" alt="${cCode}" style="vertical-align: sub; margin-right: 5px; border-radius: 2px;">` : '🏳️';
@@ -2117,12 +1438,10 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
               metaHtml += `<div class="card-meta" style="${sys.show_price !== 'true' ? 'margin-top:8px;' : ''}">剩余天数: ${expireText}</div>`;
             }
 
-            // 流量统计
             const rx_val_str = formatBytes(sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_rx || 0) : parseFloat(server.net_rx || 0));
             const tx_val_str = formatBytes(sys.auto_reset_traffic === 'true' ? parseFloat(server.monthly_tx || 0) : parseFloat(server.net_tx || 0));
             metaHtml += `<div class="card-meta" style="${sys.show_price !== 'true' && sys.show_expire !== 'true' ? 'margin-top:8px;' : ''}">流量: <span style="color:#10b981">↓</span> ${rx_val_str} | <span style="color:#3b82f6">↑</span> ${tx_val_str}</div>`;
             
-            // 在线时间与更新时间
             const diffSec = Math.round((now - server.last_updated) / 1000);
             let upTimeFormat = (server.uptime || '-').replace('days', '天').replace('day', '天');
             metaHtml += `<div class="card-meta" style="margin-top:2px;">在线: ${upTimeFormat} | 更新: ${diffSec}s前</div>`;
@@ -2141,7 +1460,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
             const diskTotalStr = formatBytes((parseFloat(server.disk_total || 0) * 1048576).toString());
 
             cardContentHtml += `
-              <a href="/?id=${server.id}" class="vps-card" data-country="${cCode}">
+              <a href="/?id=${server.id}" class="vps-card" data-id="${server.id}" data-country="${cCode}">
                 <div class="card-left">
                   <div class="card-title">
                     <div class="status-dot" style="background:${statusColor};"></div>
@@ -2177,8 +1496,8 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
                   </div>
                   
                   <div style="display: flex; justify-content: space-between; font-size: 11px; color: #888; margin-top: 4px; white-space: nowrap; gap: 8px;">
-                    <div style="overflow: hidden; text-overflow: ellipsis;"><span style="color:#10b981">↓</span> ${netInSpeed}/s</div>
-                    <div style="overflow: hidden; text-overflow: ellipsis;"><span style="color:#3b82f6">↑</span> ${netOutSpeed}/s</div>
+                    <div style="overflow: hidden; text-overflow: ellipsis;"><span style="color:#10b981">↓</span> <span class="speed-anim" data-id="c-in-${server.id}" data-val="${netInSpeedRaw}">0 B/s</span></div>
+                    <div style="overflow: hidden; text-overflow: ellipsis;"><span style="color:#3b82f6">↑</span> <span class="speed-anim" data-id="c-out-${server.id}" data-val="${netOutSpeedRaw}">0 B/s</span></div>
                   </div>
                 </div>
               </a>
@@ -2209,8 +1528,8 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
                   </div>
                 </td>
                 <td style="color:#64748b; font-size:12px; white-space: nowrap;">${rx_val_str} | ${tx_val_str}</td>
-                <td style="white-space: nowrap;">${netInSpeed}/s</td>
-                <td style="white-space: nowrap;">${netOutSpeed}/s</td>
+                <td style="white-space: nowrap;"><span class="speed-anim" data-id="t-in-${server.id}" data-val="${netInSpeedRaw}">0 B/s</span></td>
+                <td style="white-space: nowrap;"><span class="speed-anim" data-id="t-out-${server.id}" data-val="${netOutSpeedRaw}">0 B/s</span></td>
                 <td style="color:#64748b; font-size:12px; white-space: nowrap;">${Math.round((now - server.last_updated)/1000)} 秒前</td>
               </tr>
             `;
@@ -2232,7 +1551,6 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
           body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f4f5f7; color: #333; margin: 0; padding: 20px; }
           .container { max-width: 1200px; margin: 0 auto; }
           
-          /* 强制改为两列(2行)网格布局，彻底解决挤出和换行错乱问题 */
           .global-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); margin-bottom: 30px; text-align: center; box-sizing: border-box; width: 100%; align-items: center; }
           .g-item { min-width: 0; box-sizing: border-box; }
           .g-val { font-size: 22px; font-weight: bold; color: #111; margin: 8px 0; line-height: 1.2; word-break: break-word; white-space: normal; }
@@ -2256,6 +1574,12 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
           
           .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
           .admin-btn { padding: 8px 16px; background: #3b82f6; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight:bold; }
+          
+          /* 排行榜 Modal CSS */
+          .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; overflow-y: auto; backdrop-filter: blur(4px); }
+          .modal-content { background: white; padding: 20px; border-radius: 12px; margin: 40px auto; position: relative; max-height: 85vh; overflow-y: auto; box-sizing: border-box; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+          .theme2 .modal-content, .theme5 .modal-content { background: #161b22; color: #c9d1d9; border: 1px solid #30363d; }
+          
           @media (max-width: 800px) { .grid-container { grid-template-columns: 1fr; } .vps-card { flex-direction: column; } .card-right { padding-left: 0; border-left: none; border-top: 1px solid #f0f0f0; margin-top: 15px; padding-top: 15px; } .header { flex-direction: column; align-items: flex-start; gap: 15px;} .header-right { width:100%; justify-content: space-between;} }
           
           ${themeStyles}
@@ -2269,6 +1593,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
             
             <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
               <div class="view-controls">
+                <button class="toggle-btn" onclick="openRankModal()">🏆 全网资产排名</button>
                 <button class="toggle-btn active" id="btn-card" onclick="switchView('card')">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg> 卡片
                 </button>
@@ -2291,7 +1616,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
             <div class="g-item"><div class="g-label">服务器总数</div><div class="g-val">${results.length} ${rankHtmlServer}</div><div class="g-sub">在线 <span style="color:#10b981">${globalOnline}</span> | 离线 <span style="color:#ef4444">${globalOffline}</span></div></div>
             ${sys.show_asset === 'true' ? `<div class="g-item"><div class="g-label">数字资产 (${sys.asset_currency || '元'})</div><div class="g-val">${totalAsset.toFixed(2)} <span style="font-size:16px;color:#888;">总</span> | ${remAsset.toFixed(2)} <span style="font-size:16px;color:#888;">余</span> ${rankHtmlAsset}</div></div>` : ''}
             <div class="g-item"><div class="g-label">总计流量 (入 | 出) ${sys.auto_reset_traffic === 'true' ? '<span style="font-size:10px; color:#c2410c;">(本月)</span>' : ''}</div><div class="g-val">${formatBytes(globalNetRx)} | ${formatBytes(globalNetTx)}</div></div>
-            <div class="g-item"><div class="g-label">实时网速 (入 | 出)</div><div class="g-val"><span style="color:#10b981">↓</span> ${formatBytes(globalSpeedIn)}/s | <span style="color:#3b82f6">↑</span> ${formatBytes(globalSpeedOut)}/s</div></div>
+            <div class="g-item"><div class="g-label">实时网速 (入 | 出)</div><div class="g-val"><span style="color:#10b981">↓</span> <span class="speed-anim" data-id="g-in" data-val="${globalSpeedIn}">0 B/s</span> | <span style="color:#3b82f6">↑</span> <span class="speed-anim" data-id="g-out" data-val="${globalSpeedOut}">0 B/s</span></div></div>
           </div>
 
           <div id="view-card" class="view-panel active">
@@ -2315,18 +1640,94 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
             <div id="map-container"></div>
           </div>
           
+          <div id="rankModal" class="modal">
+            <div class="modal-content" style="max-width: 800px;">
+               <h3 style="margin-top:0; color:#f59e0b;">🏆 全网节点与资产综合排名</h3>
+               <p style="font-size:12px; color:#888; margin-bottom:20px;">* 跨实例的数据排行必须依赖中心化汇总 API。此列表展示已加入互联网络的面板实例情况。</p>
+               <table class="custom-table">
+                 <thead><tr><th>排名</th><th>面板节点 (Domain)</th><th>VPS 数量</th><th>探针总资产</th></tr></thead>
+                 <tbody id="rank-tbody"><tr><td colspan="4" style="text-align:center;">加载中...</td></tr></tbody>
+               </table>
+               <div style="text-align:right; margin-top:20px;"><button onclick="closeRankModal()" class="btn btn-gray" style="padding: 8px 20px;">关闭</button></div>
+            </div>
+          </div>
+          
           ${getFooterHtml(sys)}
         </div>
 
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
         
         <script>
+          const formatBytesJs = (bytes) => {
+            const b = parseInt(bytes);
+            if (isNaN(b) || b === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(b) / Math.log(k));
+            return parseFloat((b / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+          };
+
+          // 核心动画缓存与函数
+          window.speedCache = {};
+          function animateBytes(el, start, end, duration) {
+              let startTimestamp = null;
+              const step = (timestamp) => {
+                  if (!startTimestamp) startTimestamp = timestamp;
+                  const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+                  const easeProgress = 1 - Math.pow(1 - progress, 3); // easeOutCubic
+                  const currentBytes = start + (end - start) * easeProgress;
+                  el.innerText = formatBytesJs(currentBytes) + '/s';
+                  if (progress < 1) window.requestAnimationFrame(step);
+              };
+              window.requestAnimationFrame(step);
+          }
+
+          function applySpeedAnimations() {
+              document.querySelectorAll('.speed-anim').forEach(el => {
+                  const id = el.dataset.id;
+                  const newVal = parseFloat(el.dataset.val) || 0;
+                  const oldVal = window.speedCache[id] !== undefined ? window.speedCache[id] : 0;
+                  window.speedCache[id] = newVal;
+                  
+                  // 只有数值变化时才执行动画
+                  if (oldVal !== newVal) {
+                      animateBytes(el, oldVal, newVal, 1200);
+                  } else {
+                      el.innerText = formatBytesJs(newVal) + '/s';
+                  }
+              });
+          }
+
+          // 全网排名中心逻辑
+          async function openRankModal() {
+              document.getElementById('rankModal').style.display = 'block';
+              try {
+                  let apiUrl = '${sys.ranking_api}';
+                  let html = '';
+                  if (apiUrl) {
+                      let res = await fetch(apiUrl, {method:'GET'}); 
+                      let list = await res.json();
+                      // 如果配置了API，这里渲染真实的跨部署聚合数据
+                      if(list && list.length > 0) {
+                          list.forEach((item, index) => {
+                              html += \`<tr><td>\${index + 1}</td><td>\${item.domain}</td><td>\${item.servers} 台</td><td>\${item.assets} \${'${sys.asset_currency}'}</td></tr>\`;
+                          });
+                      }
+                  } else {
+                      // 未配置时回退展示本地孤岛统计
+                      html = '<tr><td>1</td><td>👑 本机实例 (当前面板)</td><td>${results.length} 台</td><td>${totalAsset.toFixed(2)} ${sys.asset_currency}</td></tr>';
+                      html += '<tr><td colspan="4" style="text-align:center; color:#888; font-size:12px; padding-top:20px;">(⚠️ 未配置中心聚合 API，当前仅展示本地数据。跨账号的 Worker 物理隔离，无法在无 API 时互相发现)</td></tr>';
+                  }
+                  document.getElementById('rank-tbody').innerHTML = html;
+              } catch(e) {
+                  document.getElementById('rank-tbody').innerHTML = '<tr><td colspan="4" style="text-align:center; color:red;">获取排名数据失败，请检查 API 或网络。</td></tr>';
+              }
+          }
+          function closeRankModal() { document.getElementById('rankModal').style.display = 'none'; }
+
           let mapInitialized = false;
           window.currentFilter = 'all';
 
-          // ==========================================
-          // 异步中心API交互：静默获取本站的全网排名
-          // ==========================================
           let currentServerRank = '';
           let currentAssetRank = '';
 
@@ -2347,9 +1748,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
                       
                       const elA = document.getElementById('ajax-rank-asset');
                       if(elA && currentAssetRank) elA.innerHTML = currentAssetRank;
-                  } catch(e) {
-                      console.log('Rank fetch failed:', e);
-                  }
+                  } catch(e) {}
               };
               fetchRank();
           }
@@ -2437,24 +1836,16 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
           };
 
           async function initMap() {
-            window.myMap = L.map('map-container', {
-                zoomControl: true,
-                attributionControl: false,
-                minZoom: 1
-            }).setView([30, 10], 2);
-
+            window.myMap = L.map('map-container', { zoomControl: true, attributionControl: false, minZoom: 1 }).setView([30, 10], 2);
             try {
                 const res = await fetch('https://cdn.jsdelivr.net/gh/johan/world.geo.json@master/countries.geo.json');
                 worldGeoJson = await res.json();
                 drawMarkers();
-            } catch (e) {
-                console.error("Map load failed", e);
-            }
+            } catch (e) {}
           }
 
           function drawMarkers() {
             if(!window.myMap || !worldGeoJson) return;
-
             const newDataStr = document.getElementById('map-data').textContent;
             if (currentMapDataStr === newDataStr) return;
             currentMapDataStr = newDataStr;
@@ -2467,20 +1858,12 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
             const isDark = document.body.className.includes('theme2') || document.body.className.includes('theme5');
 
             const activeIso3 = {};
-            for (const code in data) {
-                if (iso2To3[code]) activeIso3[iso2To3[code]] = true;
-            }
+            for (const code in data) { if (iso2To3[code]) activeIso3[iso2To3[code]] = true; }
 
             geoJsonLayer = L.geoJSON(worldGeoJson, {
                 style: function(feature) {
                     const isActive = activeIso3[feature.id];
-                    return {
-                        fillColor: isActive ? '#10b981' : (isDark ? '#2a303c' : '#d5dce2'),
-                        weight: 1,
-                        opacity: 1,
-                        color: isDark ? '#1a202c' : '#ffffff',
-                        fillOpacity: 1
-                    };
+                    return { fillColor: isActive ? '#10b981' : (isDark ? '#2a303c' : '#d5dce2'), weight: 1, opacity: 1, color: isDark ? '#1a202c' : '#ffffff', fillOpacity: 1 };
                 }
             }).addTo(window.myMap);
 
@@ -2496,6 +1879,7 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
              const savedView = localStorage.getItem('monitor_preferred_view') || 'card';
              switchView(savedView);
              applyFilter();
+             applySpeedAnimations(); // 首次加载触发动画
           });
 
           setInterval(async () => {
@@ -2514,7 +1898,6 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
               
               document.getElementById('map-data').textContent = newDoc.getElementById('map-data').textContent;
               
-              // DOM 刷新后重新填充已获取的排名
               if (currentServerRank) {
                   const elS = document.getElementById('ajax-rank-server');
                   if (elS) elS.innerHTML = currentServerRank;
@@ -2526,6 +1909,10 @@ echo "✅ Linux 探针安装成功！热重载功能已启用。"
 
               drawMarkers();
               applyFilter(); 
+              
+              // 关键：在 DOM 替换完毕后，立刻触发新一轮网速数值跳动特效
+              applySpeedAnimations();
+
             } catch (e) {
               console.log('Ajax Refresh Failed', e);
             }
