@@ -62,7 +62,7 @@ export default {
           history: "TEXT DEFAULT '{}'",
           is_hidden: "TEXT DEFAULT 'false'",
           virt: "TEXT DEFAULT ''",
-          hist_updated: "INTEGER DEFAULT 0" // 🚀 性能增量扩展字段：杜绝无效反序列化消耗
+          hist_updated: "INTEGER DEFAULT 0" 
         };
 
         for (const [colName, colDef] of Object.entries(newCols)) {
@@ -199,21 +199,29 @@ export default {
       } catch (e) {}
     }
 
+    // 🚀 核心优化 1：引入全局内存缓存，避免所有路由频繁读取 Settings 表
     let sys = {
       site_title: '⚡ Server Monitor Pro', admin_title: '⚙️ 探针管理后台',
       theme: 'theme1', custom_bg: '', custom_css: '', custom_head: '', custom_script: '', 
       is_public: 'true', show_price: 'true', show_expire: 'true', show_bw: 'true', show_tf: 'true',
       show_asset: 'false', asset_currency: '元', is_beacon: 'true', enable_ranking: 'false', ranking_api: '',
       tg_notify: 'false', tg_bot_token: '', tg_chat_id: '',
-      auto_reset_traffic: 'false', report_interval: '40',
+      auto_reset_traffic: 'false', report_interval: '60', // 默认提升至 60 秒
       ping_node_ct: 'default', ping_node_cu: 'default', ping_node_cm: 'default',
       miner_wallet: '', ping_nodes_list: ''
     };
 
-    try {
-      const { results } = await env.DB.prepare('SELECT * FROM settings').all();
-      if (results && results.length > 0) results.forEach(r => sys[r.key] = r.value);
-    } catch (e) {}
+    const currentMs = Date.now();
+    if (globalThis.sysCache && (currentMs - globalThis.sysCacheTime < 60000)) {
+        sys = globalThis.sysCache;
+    } else {
+        try {
+          const { results } = await env.DB.prepare('SELECT * FROM settings').all();
+          if (results && results.length > 0) results.forEach(r => sys[r.key] = r.value);
+          globalThis.sysCache = sys;
+          globalThis.sysCacheTime = currentMs;
+        } catch (e) {}
+    }
 
     if (request.method === 'GET' && url.pathname === '/config.json') {
       const cache = caches.default;
@@ -221,13 +229,13 @@ export default {
       
       if (!response) {
         if (!globalThis.configCache) {
-           globalThis.configCache = JSON.stringify({ INTERVAL: parseInt(sys.report_interval || '5'), CT: sys.ping_node_ct, CU: sys.ping_node_cu, CM: sys.ping_node_cm });
+           globalThis.configCache = JSON.stringify({ INTERVAL: parseInt(sys.report_interval || '60'), CT: sys.ping_node_ct, CU: sys.ping_node_cu, CM: sys.ping_node_cm });
         }
         let configData = globalThis.configCache;
         response = new Response(configData, {
           headers: {
             'Content-Type': 'application/json',
-            'Cache-Control': 'public, max-age=5, s-maxage=15' 
+            'Cache-Control': 'public, max-age=60, s-maxage=60' 
           }
         });
         ctx.waitUntil(cache.put(request, response.clone()));
@@ -812,7 +820,7 @@ export default {
                         const tip = await env.DB.prepare('SELECT block_hash FROM blockchain_ledger WHERE status = 1 ORDER BY slot_id DESC LIMIT 1').first();
                         if (tip && tip.block_hash === block.block_hash) {
                             const blockData = { slot_id: block.slot_id, proposer_domain: host, block_hash: block.block_hash, parent_hash: block.parent_hash, payload: block.payload, timestamp: block.timestamp, total_difficulty: blockDifficulty, signature: block.signature };
-                            // 🚀 优化：限制为随机选取 8 个节点进行 Gossip 传染，完美解决 Workers Fetch 50并发上限问题
+                            // 🚀 核心优化 2：Gossip 协议重构，从 LIMIT 500 改为 LIMIT 8，彻底规避 Workers 子请求数量上限导致的 CPU 爆表
                             const { results: beacons } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') AND domain != ? ORDER BY RANDOM() LIMIT 8`).bind(host).all();
                             for (const b of beacons) {
                                 fetchWithTimeSync(`${b.domain}/api/consensus/submit`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(blockData) }, b.domain).catch(() => {});
@@ -840,7 +848,7 @@ export default {
         }
     }
 
-    const mineAndGossip = async (localAsset, localVpsCount) => {
+    const mineAndGossip = async () => {
         try {
             const currentNetTime = getNetworkTime();
             const currentSlot = Math.max(1, Math.floor((currentNetTime - EPOCH_START) / SLOT_TIME));
@@ -853,6 +861,13 @@ export default {
                 globalThis.lastAttemptedSlot = currentSlot;
                 return;
             }
+
+            // 🚀 核心优化 3：将全局服务器信息的读取移到真正确认可以出块之后，避免被频繁的心跳浪费 D1 查询额度
+            const { results: allS } = await env.DB.prepare('SELECT price, expire_date FROM servers WHERE is_hidden="false"').all();
+            let localAsset = 0;
+            for(const s of allS) { localAsset += (calcServerAsset(s, currentNetTime).amount || 0); }
+            localAsset = Math.min(localAsset, 100000000);
+            let localVpsCount = allS.length;
 
             const leaders = await getValidLeadersForSlot(currentSlot);
             const slotStart = EPOCH_START + currentSlot * SLOT_TIME;
@@ -978,7 +993,6 @@ export default {
 
             const blockData = { slot_id: currentSlot, proposer_domain: host, block_hash: hash, parent_hash: parentHash, payload: payloadStr, timestamp: currentNetTime, total_difficulty: currentDifficulty, signature: signature };
             
-            // 🚀 优化：自己挖出新块后的广播也限制在 8 个随机节点内，通过 Gossip 层层扩散
             const { results: beacons } = await env.DB.prepare(`SELECT domain FROM blockchain_peers WHERE is_beacon IN ('true', '1') AND domain != ? ORDER BY RANDOM() LIMIT 8`).bind(host).all();
             for (const b of beacons) {
                 fetchWithTimeSync(`${b.domain}/api/consensus/submit`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(blockData) }, b.domain).catch(() => {});
@@ -1164,7 +1178,7 @@ export default {
           }
 
           const configPayload = {
-            INTERVAL: parseInt(data.settings.report_interval || '5'),
+            INTERVAL: parseInt(data.settings.report_interval || '60'),
             CT: data.settings.ping_node_ct || 'default',
             CU: data.settings.ping_node_cu || 'default',
             CM: data.settings.ping_node_cm || 'default'
@@ -1428,7 +1442,7 @@ export default {
               </div>
               <div class="form-group">
                 <label>⏱️ Agent 上报间隔 (秒)</label>
-                <input type="number" id="cfg_report_interval" value="${sys.report_interval || '40'}" min="1" max="120" placeholder="默认 40 秒">
+                <input type="number" id="cfg_report_interval" value="${sys.report_interval || '60'}" min="1" max="300" placeholder="默认 60 秒">
               </div>
             </div>
             <div>
@@ -1626,7 +1640,7 @@ export default {
                 tg_notify: document.getElementById('cfg_tg_notify').value,
                 tg_bot_token: document.getElementById('cfg_tg_bot_token').value,
                 tg_chat_id: document.getElementById('cfg_tg_chat_id').value,
-                report_interval: document.getElementById('cfg_report_interval').value || '5',
+                report_interval: document.getElementById('cfg_report_interval').value || '60',
                 ping_node_ct: document.getElementById('cfg_ping_node_ct').value,
                 ping_node_cu: document.getElementById('cfg_ping_node_cu').value,
                 ping_node_cm: document.getElementById('cfg_ping_node_cm').value
@@ -1768,13 +1782,13 @@ export default {
     // 一键安装脚本 (/install.sh)
     // ==========================================
     if (request.method === 'GET' && url.pathname === '/install.sh') {
-      let reportInterval = '5';
+      let reportInterval = '60'; // 🚀 核心优化 4：新安装探针默认 60 秒上报
       let pingCt = 'default'; let pingCu = 'default'; let pingCm = 'default';
       try {
         const res = await env.DB.prepare("SELECT key, value FROM settings WHERE key IN ('report_interval', 'ping_node_ct', 'ping_node_cu', 'ping_node_cm')").all();
         if (res && res.results) {
            res.results.forEach(r => {
-              if (r.key === 'report_interval') reportInterval = r.value || '5';
+              if (r.key === 'report_interval') reportInterval = r.value || '60';
               if (r.key === 'ping_node_ct') pingCt = r.value || 'default';
               if (r.key === 'ping_node_cu') pingCu = r.value || 'default';
               if (r.key === 'ping_node_cm') pingCm = r.value || 'default';
@@ -1833,7 +1847,7 @@ PING_CT="0"; PING_CU="0"; PING_CM="0"; PING_BD="0"
 REPORT_INTERVAL=180
 PING_NODE_CT="${pingCt}"; PING_NODE_CU="${pingCu}"; PING_NODE_CM="${pingCm}"
 
-HEARTBEAT_INTERVAL=120
+HEARTBEAT_INTERVAL=300
 LAST_CONFIG_TIME=0
 LAST_REPORT_TIME=0
 LAST_PING_TIME=0
@@ -1937,6 +1951,12 @@ while true; do
   
   if [ "\\$CPU_DIFF" -eq 1 ] || [ "\\$RAM_DIFF" -eq 1 ] || [ "\\$DISK_DIFF" -eq 1 ]; then NEED_REPORT=1; fi
   if [ "\\$IPV4" != "\\$PREV_V4_STATE" ] || [ "\\$IPV6" != "\\$PREV_V6_STATE" ]; then NEED_REPORT=1; fi
+
+  # 🚀 核心优化 5：彻底阻断“轻微波动”导致的连发狂刷！强制节流防抖
+  MIN_REPORT_INTERVAL=20
+  if [ \\$NEED_REPORT -eq 1 ] && [ \\$((NOW - LAST_REPORT_TIME)) -lt \\$MIN_REPORT_INTERVAL ]; then
+      NEED_REPORT=0
+  fi
 
   if [ \\$NEED_REPORT -eq 1 ]; then
     PAYLOAD="{\\"id\\": \\"\\$SERVER_ID\\", \\"secret\\": \\"\\$SECRET\\", \\"metrics\\": { \\"cpu\\": \\"\\$CPU\\", \\"ram\\": \\"\\$RAM\\", \\"ram_total\\": \\"\\$RAM_TOTAL\\", \\"ram_used\\": \\"\\$RAM_USED\\", \\"swap_total\\": \\"\\$SWAP_TOTAL\\", \\"swap_used\\": \\"\\$SWAP_USED\\", \\"disk\\": \\"\\$DISK\\", \\"disk_total\\": \\"\\$DISK_TOTAL\\", \\"disk_used\\": \\"\\$DISK_USED\\", \\"load\\": \\"\\$LOAD\\", \\"uptime\\": \\"\\$UPTIME\\", \\"boot_time\\": \\"\\$BOOT_TIME\\", \\"net_rx\\": \\"\\$RX_NOW\\", \\"net_tx\\": \\"\\$TX_NOW\\", \\"net_in_speed\\": \\"\\$RX_SPEED\\", \\"net_out_speed\\": \\"\\$TX_SPEED\\", \\"os\\": \\"\\$OS\\", \\"arch\\": \\"\\$ARCH\\", \\"cpu_info\\": \\"\\$CPU_INFO\\", \\"processes\\": \\"\\$PROCESSES\\", \\"tcp_conn\\": \\"\\$TCP_CONN\\", \\"udp_conn\\": \\"\\$UDP_CONN\\", \\"ip_v4\\": \\"\\$IPV4\\", \\"ip_v6\\": \\"\\$IPV6\\", \\"ping_ct\\": \\"\\$PING_CT\\", \\"ping_cu\\": \\"\\$PING_CU\\", \\"ping_cm\\": \\"\\$PING_CM\\", \\"ping_bd\\": \\"\\$PING_BD\\", \\"virt\\": \\"\\$VIRT\\" }}"
@@ -2108,22 +2128,10 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
             ctx.waitUntil(checkOfflineNodes());
         }
         
-        // 🚀 优化：将 mineAndGossip 的触发频率从 5秒 降低至 15秒，配合新的 8 节点广播机制，彻底告别 1047 CPU超载
+        // 🚀 核心优化 6：将挖矿判定节流拉长到 15秒（完美匹配 Slot 时间，大幅减少无意义校验）
         if (!globalThis.lastMineAndGossipTime || nowMsForThrottle - globalThis.lastMineAndGossipTime > 15000) {
             globalThis.lastMineAndGossipTime = nowMsForThrottle;
-            ctx.waitUntil((async () => {
-                try {
-                    const { results: allS } = await env.DB.prepare('SELECT price, expire_date FROM servers WHERE is_hidden="false"').all();
-                    let currentAsset = 0;
-                    for(const s of allS) {
-                        const ast = calcServerAsset(s, nowMsForThrottle).amount;
-                        currentAsset += (ast || 0); 
-                    }
-                    currentAsset = Math.min(currentAsset, 100000000); 
-
-                    await mineAndGossip(currentAsset, allS.length); 
-                } catch(e) {}
-            })());
+            ctx.waitUntil(mineAndGossip());
         }
 
         return new Response("OK", { status: 200 });
@@ -2148,12 +2156,13 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
       const isAjax = url.searchParams.get('ajax') === '1';
       const viewId = url.searchParams.get('id');
       
-      const nowSec = Math.floor(Date.now() / 5000); 
+      // 🚀 核心优化 7：大幅强化前端 Cache，将刷新消耗拦在边缘节点外
+      const nowSec = Math.floor(Date.now() / 15000); 
       if (isAjax && globalThis.ajaxCacheSec === nowSec && globalThis.ajaxCacheData) {
           return new Response(globalThis.ajaxCacheData, { headers: { 'Content-Type': 'text/html' } });
       }
 
-      const nowSecIndex = Math.floor(Date.now() / 3000); 
+      const nowSecIndex = Math.floor(Date.now() / 30000); 
       if (!isAjax && !viewId && globalThis.indexCacheSec === nowSecIndex && globalThis.indexCacheData) {
           return new Response(globalThis.indexCacheData, { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
       }
@@ -2299,7 +2308,7 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
                 }
               } catch (e) {}
             }
-            setInterval(fetchData, 15000); fetchData();
+            setInterval(fetchData, 30000); fetchData();
           </script>
           ${sys.custom_script || ''}
         </body>
@@ -2713,7 +2722,7 @@ echo "✅ Linux 高精脱钩版探针安装成功！"
               });
               drawMarkers(); applyFilter(); 
             } catch (e) {}
-          }, 15000); 
+          }, 30000); // 🚀 核心优化 8：降低前端 Ajax 轮询频率，从 15s 降至 30s
         </script>
         ${sys.custom_script || ''}
       </body>
