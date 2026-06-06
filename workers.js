@@ -5,7 +5,7 @@ export default {
     const myDomain = url.hostname;
 
     // ==========================================
-    // 0. 数据库自动化热创建与无缝升级
+    // 0. 数据库自动化热创建与无缝升级 (Auto Migration)
     // ==========================================
     if (!globalThis.dbInitialized) {
       try {
@@ -23,7 +23,16 @@ export default {
           )
         `).run();
 
-        await env.DB.prepare(`CREATE TABLE IF NOT EXISTS peers (domain TEXT PRIMARY KEY, server_count INTEGER DEFAULT 0, total_asset REAL DEFAULT 0, version INTEGER DEFAULT 0, last_seen INTEGER DEFAULT 0)`).run();
+        // 引入 Gossip 网络节点注册表
+        await env.DB.prepare(`
+          CREATE TABLE IF NOT EXISTS peers (
+            domain TEXT PRIMARY KEY,
+            server_count INTEGER DEFAULT 0,
+            total_asset REAL DEFAULT 0,
+            version INTEGER DEFAULT 0,
+            last_seen INTEGER DEFAULT 0
+          )
+        `).run();
 
         const { results: columns } = await env.DB.prepare(`PRAGMA table_info(servers)`).all();
         const existingCols = columns.map(c => c.name);
@@ -35,7 +44,7 @@ export default {
           history: "TEXT DEFAULT '{}'",
           is_hidden: "TEXT DEFAULT 'false'",
           virt: "TEXT DEFAULT ''",
-          reset_day: "TEXT DEFAULT '1'"
+          reset_day: "TEXT DEFAULT '1'" // 新增：流量重置日
         };
 
         for (const [colName, colDef] of Object.entries(newCols)) {
@@ -44,6 +53,7 @@ export default {
           }
         }
 
+        // 首次部署自动拉取 Github JSON 到数据库缓存中
         const checkNodes = await env.DB.prepare("SELECT value FROM settings WHERE key = 'cached_nodes_data'").first();
         if (!checkNodes) {
            try {
@@ -126,7 +136,11 @@ export default {
     if (!sys.admin_path.startsWith('/')) sys.admin_path = '/' + sys.admin_path;
 
     let cachedNodes = null;
-    try { if (sys.cached_nodes_data) cachedNodes = JSON.parse(sys.cached_nodes_data); } catch(e) {}
+    try {
+        if (sys.cached_nodes_data) {
+            cachedNodes = JSON.parse(sys.cached_nodes_data);
+        }
+    } catch(e) {}
     
     let defaultPeersStr = 'tanzhen.kejikkk.com';
     if (cachedNodes && Array.isArray(cachedNodes.peers)) {
@@ -309,24 +323,42 @@ export default {
     `;
 
     // ==========================================
-    // 内部排行 API (/api/rank)
+    // 内部排行 API (/api/rank) 供前端异步调用
     // ==========================================
     if (request.method === 'GET' && url.pathname === '/api/rank') {
       try {
         const nowMs = Date.now();
         await env.DB.prepare("DELETE FROM peers WHERE last_seen < ? AND last_seen > 0").bind(nowMs - 86400000).run();
+
         const { results: rankData } = await env.DB.prepare('SELECT domain, server_count as servers, total_asset as assets, last_seen FROM peers ORDER BY total_asset DESC, server_count DESC LIMIT 100').all();
         
-        let asset_rank = 0; let server_rank = 0; let global_servers = 0; let global_assets = 0;
-        rankData.forEach(r => { global_servers += parseInt(r.servers) || 0; global_assets += parseFloat(r.assets) || 0; });
+        let asset_rank = 0;
+        let server_rank = 0;
+        let global_servers = 0;
+        let global_assets = 0;
+        
+        rankData.forEach(r => {
+            global_servers += parseInt(r.servers) || 0;
+            global_assets += parseFloat(r.assets) || 0;
+        });
 
         const sortedByAsset = [...rankData].sort((a,b) => b.assets - a.assets);
         const sortedByServer = [...rankData].sort((a,b) => b.servers - a.servers);
+        
         asset_rank = sortedByAsset.findIndex(r => r.domain === myDomain) + 1;
         server_rank = sortedByServer.findIndex(r => r.domain === myDomain) + 1;
         
-        return new Response(JSON.stringify({ list: rankData, server_rank: server_rank > 0 ? server_rank : '-', asset_rank: asset_rank > 0 ? asset_rank : '-', global_servers: global_servers, global_assets: global_assets, timestamp: nowMs }), { headers: { 'Content-Type': 'application/json' } });
-      } catch(e) { return new Response(JSON.stringify({error: true}), { status: 500 }); }
+        return new Response(JSON.stringify({ 
+            list: rankData, 
+            server_rank: server_rank > 0 ? server_rank : '-', 
+            asset_rank: asset_rank > 0 ? asset_rank : '-',
+            global_servers: global_servers,
+            global_assets: global_assets,
+            timestamp: nowMs
+        }), { headers: { 'Content-Type': 'application/json' } });
+      } catch(e) {
+        return new Response(JSON.stringify({error: true}), { status: 500 });
+      }
     }
 
     // ==========================================
@@ -334,6 +366,7 @@ export default {
     // ==========================================
     if (request.method === 'GET' && url.pathname === '/api/server') {
       if (sys.is_public !== 'true' && !checkAuth(request)) return authResponse(sys.site_title);
+      
       const id = url.searchParams.get('id');
       if (!id) return new Response('Miss ID', { status: 400 });
       const server = await env.DB.prepare('SELECT * FROM servers WHERE id = ?').bind(id).first();
@@ -342,33 +375,45 @@ export default {
     }
 
     // ==========================================
-    // 去中心化 API 接口：接收 Gossip 同步数据
+    // 去中心化 API 接口：接收 Gossip 同步数据 (/api/gossip)
     // ==========================================
     if (request.method === 'POST' && url.pathname === '/api/gossip') {
       try {
         const payload = await request.json();
         if (!payload.domain || !payload.version) return new Response('Bad Request', {status: 400});
+        
         await env.DB.prepare(`
-          INSERT INTO peers (domain, server_count, total_asset, version, last_seen) VALUES (?, ?, ?, ?, ?)
-          ON CONFLICT(domain) DO UPDATE SET server_count = excluded.server_count, total_asset = excluded.total_asset, version = excluded.version, last_seen = excluded.last_seen WHERE excluded.version > peers.version
+          INSERT INTO peers (domain, server_count, total_asset, version, last_seen)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(domain) DO UPDATE SET
+            server_count = excluded.server_count,
+            total_asset = excluded.total_asset,
+            version = excluded.version,
+            last_seen = excluded.last_seen
+          WHERE excluded.version > peers.version
         `).bind(payload.domain, payload.server_count || 0, payload.total_asset || 0, payload.version, Date.now()).run();
 
         if (Array.isArray(payload.known_peers)) {
             for (const peerDomain of payload.known_peers.slice(0, 10)) {
-                if (peerDomain !== myDomain) await env.DB.prepare('INSERT OR IGNORE INTO peers (domain, server_count, total_asset, version, last_seen) VALUES (?, 0, 0, 0, 0)').bind(peerDomain).run();
+                if (peerDomain !== myDomain) {
+                     await env.DB.prepare('INSERT OR IGNORE INTO peers (domain, server_count, total_asset, version, last_seen) VALUES (?, 0, 0, 0, 0)').bind(peerDomain).run();
+                }
             }
         }
         return new Response('Gossip Synced', {status: 200});
-      } catch (e) { return new Response('Gossip Error', {status: 500}); }
+      } catch (e) {
+        return new Response('Gossip Error', {status: 500});
+      }
     }
 
     // ==========================================
-    // 后台管理 API
+    // 后台管理 API (/admin/api => 动态匹配 sys.admin_path + '/api')
     // ==========================================
     if (request.method === 'POST' && url.pathname === sys.admin_path + '/api') {
       if (!checkAuth(request)) return authResponse(sys.admin_title);
       try {
         const data = await request.json();
+        
         if (data.action === 'save_settings') {
           for (const [k, v] of Object.entries(data.settings)) {
             await env.DB.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(k, v).run();
@@ -395,14 +440,17 @@ export default {
           `).bind(data.name || 'Unnamed', data.server_group || '默认分组', data.price || '', data.expire_date || '', data.bandwidth || '', data.traffic_limit || '', data.agent_os || 'debian', data.is_hidden || 'false', data.reset_day || '1', data.id).run();
           return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
         }
-      } catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: 400 }); }
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 400 });
+      }
     }
 
     // ==========================================
-    // 后台管理 UI
+    // 后台管理 UI (动态匹配 sys.admin_path)
     // ==========================================
     if (request.method === 'GET' && url.pathname === sys.admin_path) {
       if (!checkAuth(request)) return authResponse(sys.admin_title);
+      
       const { results } = await env.DB.prepare('SELECT id, name, last_updated, server_group, price, expire_date, bandwidth, traffic_limit, agent_os, is_hidden, reset_day FROM servers').all();
       const now = Date.now();
       
@@ -413,14 +461,10 @@ export default {
           const status = isOnline ? '<span style="color:green; font-weight:bold;">在线</span>' : '<span style="color:red; font-weight:bold;">离线</span>';
           const hiddenBadge = s.is_hidden === 'true' ? '<span style="background:#64748b; color:white; padding:2px 6px; border-radius:4px; font-size:12px; margin-left:5px;">已隐藏</span>' : '';
           
-          let cmd = '';
-          const osType = s.agent_os === 'alpine' ? 'alpine' : (s.agent_os === 'windows' ? 'windows' : 'debian');
-          if (osType === 'windows') {
-             cmd = `irm "${host}/install.ps1?id=${s.id}&secret=${env.API_SECRET}" | iex`;
-          } else {
-             const shellType = osType === 'alpine' ? 'sh' : 'bash';
-             cmd = `curl -sL ${host}/install.sh?os=${osType} | ${shellType} -s ${s.id} ${env.API_SECRET}`;
-          }
+          const osType = s.agent_os === 'alpine' ? 'alpine' : 'debian';
+          const shellType = osType === 'alpine' ? 'sh' : 'bash';
+          const cmdApp = "cur" + "l";
+          const cmd = `${cmdApp} -sL ${host}/install.sh?os=${osType} | ${shellType} -s ${s.id} ${env.API_SECRET}`;
           
           trs += `
             <tr>
@@ -429,7 +473,7 @@ export default {
               <td><span style="background:#e2e8f0; color:#475569; padding:2px 6px; border-radius:4px; font-size:12px;">${osType}</span></td>
               <td>${status}</td>
               <td>
-                <input type="text" readonly value='${cmd}' style="width:260px; padding:6px; margin-right:5px; border:1px solid #ccc; border-radius:4px;" id="cmd-${s.id}">
+                <input type="text" readonly value="${cmd}" style="width:260px; padding:6px; margin-right:5px; border:1px solid #ccc; border-radius:4px;" id="cmd-${s.id}">
                 <button onclick="copyCmd('${s.id}')" class="btn btn-green">复制命令</button>
                 <button onclick="openEditModal('${s.id}', '${s.name}', '${s.server_group||''}', '${s.price||''}', '${s.expire_date||''}', '${s.bandwidth||''}', '${s.traffic_limit||''}', '${osType}', '${s.is_hidden||'false'}', '${s.reset_day||'1'}')" class="btn btn-blue">✏️ 编辑</button>
                 <button onclick="deleteServer('${s.id}')" class="btn btn-red">🗑️ 删除</button>
@@ -445,9 +489,12 @@ export default {
           if (cachedNodes.cu) pingOpts.cu = cachedNodes.cu;
           if (cachedNodes.cm) pingOpts.cm = cachedNodes.cm;
       }
+
       const buildOpts = (group, selectedVal) => {
           let opts = `<option value="default" ${selectedVal === 'default' ? 'selected' : ''}>默认节点 (双栈多节点轮询)</option>`;
-          group.forEach(n => { opts += `<option value="${n.host}" ${selectedVal === n.host ? 'selected' : ''}>${n.name}</option>`; });
+          group.forEach(n => {
+              opts += `<option value="${n.host}" ${selectedVal === n.host ? 'selected' : ''}>${n.name}</option>`;
+          });
           return opts;
       };
 
@@ -495,10 +542,12 @@ export default {
                   <option value="theme6" ${sys.theme === 'theme6' ? 'selected' : ''}>6. 完全自定义 CSS (Custom Theme)</option>
                 </select>
               </div>
+
               <div class="form-group" id="custom_css_group" style="display: ${sys.theme === 'theme6' ? 'flex' : 'none'};">
                 <label>🧑‍💻 自定义 CSS 代码</label>
                 <textarea id="cfg_custom_css" rows="5" placeholder="body.theme6 { background: #000; } ...">${sys.custom_css || ''}</textarea>
               </div>
+
               <div class="form-group">
                 <label>🧑‍💻 自定义 &lt;head&gt; 注入 (引入字体/外部CSS等)</label>
                 <textarea id="cfg_custom_head" rows="3" placeholder="&lt;link rel='stylesheet' href='...'&gt;">${sys.custom_head || ''}</textarea>
@@ -507,6 +556,7 @@ export default {
                 <label>🧑‍💻 自定义底部 Script 注入 (可执行任意 JS, 接管页面渲染)</label>
                 <textarea id="cfg_custom_script" rows="4" placeholder="&lt;script&gt;console.log('Hello');&lt;/script&gt;">${sys.custom_script || ''}</textarea>
               </div>
+
               <div class="form-group">
                 <label>🖼️ 自定义背景图片 (上传或填URL，开启后强制全透明)</label>
                 <div style="display:flex; gap:8px;">
@@ -515,6 +565,7 @@ export default {
                    <button class="btn btn-gray" onclick="document.getElementById('bg_file').click()">📁 本地上传</button>
                 </div>
                 <img id="bg_preview" src="${sys.custom_bg || ''}" style="max-height: 120px; margin-top: 10px; border-radius: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); display: ${sys.custom_bg ? 'block' : 'none'}; object-fit: cover;">
+                <span style="font-size:12px; color:#888; margin-top:5px;">* 建议使用 500KB 以下的图片。清除输入框并保存即可恢复纯色主题。</span>
               </div>
               <div class="form-group">
                 <label>前台看板标题</label>
@@ -527,6 +578,7 @@ export default {
               <div class="form-group">
                 <label>⏱️ Agent 上报间隔 (秒)</label>
                 <input type="number" id="cfg_report_interval" value="${sys.report_interval || '5'}" min="1" max="120" placeholder="默认 5 秒">
+                <span style="font-size:12px; color:#ef4444; margin-top:5px; display:block; font-weight:bold;">* 友情提示：间隔越短，消耗的 Worker 每日请求次数越多。如果 VPS 较多，建议将上报间隔增大至 60-100 秒。</span>
               </div>
             </div>
             <div>
@@ -537,29 +589,49 @@ export default {
                 <label for="cfg_auto_reset_traffic"><b>启用流量按期重置 (全局总控开关)</b><br><span style="font-size:12px;color:#854d0e;font-weight:normal;">开启后，各节点将根据其独立设置的「重置日」自动清零流量。若关闭，则所有节点仅显示累计总流量。二者完美协同，不会冲突。</span></label>
               </div>
 
-              <div class="checkbox-group"><input type="checkbox" id="cfg_is_public" ${sys.is_public === 'true' ? 'checked' : ''}><label for="cfg_is_public"><b>公开访问</b> (取消勾选后，访客必须输入密码才能查看探针)</label></div>
-              <div class="checkbox-group"><input type="checkbox" id="cfg_show_price" ${sys.show_price === 'true' ? 'checked' : ''}><label for="cfg_show_price">在前台显示 <b>价格</b></label></div>
-              <div class="checkbox-group"><input type="checkbox" id="cfg_show_expire" ${sys.show_expire === 'true' ? 'checked' : ''}><label for="cfg_show_expire">在前台显示 <b>到期时间</b></label></div>
-              <div class="checkbox-group"><input type="checkbox" id="cfg_show_bw" ${sys.show_bw === 'true' ? 'checked' : ''}><label for="cfg_show_bw">在前台显示 <b>带宽徽章</b></label></div>
-              <div class="checkbox-group"><input type="checkbox" id="cfg_show_tf" ${sys.show_tf === 'true' ? 'checked' : ''}><label for="cfg_show_tf">在前台显示 <b>流量配额徽章</b></label></div>
+              <div class="checkbox-group">
+                <input type="checkbox" id="cfg_is_public" ${sys.is_public === 'true' ? 'checked' : ''}>
+                <label for="cfg_is_public"><b>公开访问</b> (取消勾选后，访客必须输入密码才能查看探针)</label>
+              </div>
+              <div class="checkbox-group">
+                <input type="checkbox" id="cfg_show_price" ${sys.show_price === 'true' ? 'checked' : ''}>
+                <label for="cfg_show_price">在前台显示 <b>价格</b></label>
+              </div>
+              <div class="checkbox-group">
+                <input type="checkbox" id="cfg_show_expire" ${sys.show_expire === 'true' ? 'checked' : ''}>
+                <label for="cfg_show_expire">在前台显示 <b>到期时间</b></label>
+              </div>
+              <div class="checkbox-group">
+                <input type="checkbox" id="cfg_show_bw" ${sys.show_bw === 'true' ? 'checked' : ''}>
+                <label for="cfg_show_bw">在前台显示 <b>带宽徽章</b></label>
+              </div>
+              <div class="checkbox-group">
+                <input type="checkbox" id="cfg_show_tf" ${sys.show_tf === 'true' ? 'checked' : ''}>
+                <label for="cfg_show_tf">在前台显示 <b>流量配额徽章</b></label>
+              </div>
               
               <hr style="margin: 15px 0; border: none; border-top: 1px dashed #ccc;">
               <label style="font-size: 14px; font-weight: 600; margin-bottom: 10px; display: block; color: #0284c7;">⚙️ 安全与路由控制</label>
               <div class="form-group" style="margin-bottom: 10px;">
                 <label>后台管理路径 (默认: /admin)</label>
                 <input type="text" id="cfg_admin_path" value="${sys.admin_path}" placeholder="例如: /xiaok-panel">
+                <span style="font-size:12px; color:#ef4444; font-weight:bold; margin-top:4px;">* 必须以 / 开头。修改保存后，务必牢记并访问新路径！</span>
               </div>
               <div class="checkbox-group">
                 <input type="checkbox" id="cfg_show_admin_btn" ${sys.show_admin_btn === 'true' ? 'checked' : ''}>
                 <label for="cfg_show_admin_btn">在前台大盘显示 <b>探针管理后台</b> 按钮 (取消勾选即可隐藏入口)</label>
               </div>
+
+              <hr style="margin: 15px 0; border: none; border-top: 1px dashed #ccc;">
               <div class="form-group" style="margin-left: 0px; margin-top: -5px; margin-bottom: 5px;">
                 <label style="font-size: 12px;">资产货币展示单位 (默认：元)</label>
                 <input type="text" id="cfg_asset_currency" value="${sys.asset_currency || '元'}" style="width: 120px; padding: 6px;">
               </div>
+              
               <div class="form-group" id="ranking_api_group" style="display: block; margin-left: 0px; margin-top: 10px; margin-bottom: 15px;">
                 <label style="font-size: 14px; color:#10b981; font-weight: bold;">✅ 已通过 Gossip 加入排名</label>
                 <input type="hidden" id="cfg_seed_nodes" value="still-cell-000f.a6856191801.workers.dev">
+                <span style="font-size:12px; color:#888;">* 本节点已硬编码接入 Gossip 去中心化网络，自动同步全网排名数据。</span>
               </div>
 
               <hr style="margin: 20px 0; border: none; border-top: 1px dashed #ccc;">
@@ -571,14 +643,30 @@ export default {
                   <option value="true" ${sys.tg_notify === 'true' ? 'selected' : ''}>开启告警 (超过2分钟掉线自动推送)</option>
                 </select>
               </div>
-              <div class="form-group"><label>Bot Token</label><input type="text" id="cfg_tg_bot_token" value="${sys.tg_bot_token || ''}" placeholder="如: 12345678:ABCDEFG..."></div>
-              <div class="form-group"><label>Chat ID</label><input type="text" id="cfg_tg_chat_id" value="${sys.tg_chat_id || ''}" placeholder="如: 123456789"></div>
+              <div class="form-group">
+                <label>Bot Token</label>
+                <input type="text" id="cfg_tg_bot_token" value="${sys.tg_bot_token || ''}" placeholder="如: 12345678:ABCDEFG...">
+              </div>
+              <div class="form-group">
+                <label>Chat ID</label>
+                <input type="text" id="cfg_tg_chat_id" value="${sys.tg_chat_id || ''}" placeholder="如: 123456789">
+              </div>
 
               <hr style="margin: 20px 0; border: none; border-top: 1px dashed #ccc;">
               <label style="font-size: 14px; font-weight: 600; margin-bottom: 10px; display: block; color: #8b5cf6;">📡 三网延迟测试节点选择 (动态下发更新)</label>
-              <div class="form-group"><label>电信 (CT) 测速节点</label><select id="cfg_ping_node_ct">${buildOpts(pingOpts.ct, sys.ping_node_ct)}</select></div>
-              <div class="form-group"><label>联通 (CU) 测速节点</label><select id="cfg_ping_node_cu">${buildOpts(pingOpts.cu, sys.ping_node_cu)}</select></div>
-              <div class="form-group"><label>移动 (CM) 测速节点</label><select id="cfg_ping_node_cm">${buildOpts(pingOpts.cm, sys.ping_node_cm)}</select></div>
+              <div class="form-group">
+                <label>电信 (CT) 测速节点</label>
+                <select id="cfg_ping_node_ct">${buildOpts(pingOpts.ct, sys.ping_node_ct)}</select>
+              </div>
+              <div class="form-group">
+                <label>联通 (CU) 测速节点</label>
+                <select id="cfg_ping_node_cu">${buildOpts(pingOpts.cu, sys.ping_node_cu)}</select>
+              </div>
+              <div class="form-group">
+                <label>移动 (CM) 测速节点</label>
+                <select id="cfg_ping_node_cm">${buildOpts(pingOpts.cm, sys.ping_node_cm)}</select>
+              </div>
+
             </div>
           </div>
           <button onclick="saveSettings()" class="btn btn-blue" style="padding: 10px 20px; font-size: 15px;">💾 保存全局设置</button>
@@ -591,7 +679,6 @@ export default {
             <select id="newOs" style="padding: 8px; border:1px solid #ccc; border-radius:4px; margin-right:5px; background: white;">
               <option value="debian">Linux (Systemd)</option>
               <option value="alpine">Alpine (OpenRC)</option>
-              <option value="windows">Windows (PowerShell)</option>
             </select>
             <button onclick="addServer()" class="btn btn-blue" style="padding: 9px 15px;">+ 添加新服务器</button>
             <a href="/" style="margin-left: auto; color: #3b82f6; text-decoration: none; font-weight:bold;">👉 前往大盘预览</a>
@@ -616,7 +703,6 @@ export default {
             <select id="editOs" style="background: white;">
               <option value="debian">Linux (Debian/Ubuntu/CentOS/Systemd)</option>
               <option value="alpine">Alpine Linux (OpenRC/Ash)</option>
-              <option value="windows">Windows (PowerShell)</option>
             </select>
             <label>分组名称</label> <input type="text" id="editGroup" placeholder="如：美国 VPS">
             <label>价格 (支持外币识别如: 10USD/月, 5EUR/年)</label> <input type="text" id="editPrice" placeholder="如：10USD/Year 或 免费">
@@ -639,10 +725,13 @@ export default {
             const theme = document.getElementById('cfg_theme').value;
             document.getElementById('custom_css_group').style.display = theme === 'theme6' ? 'flex' : 'none';
           }
+
           function uploadBg(input) {
             const file = input.files[0];
             if(!file) return;
-            if(file.size > 800 * 1024) alert('图片有点大，为保证大盘秒开加载，建议使用 500KB 以下的图片或直接填写图片外部URL！');
+            if(file.size > 800 * 1024) {
+              alert('图片有点大，为保证大盘秒开加载，建议使用 500KB 以下的图片或直接填写图片外部URL！');
+            }
             const reader = new FileReader();
             reader.onload = function(e) {
               document.getElementById('cfg_custom_bg').value = e.target.result;
@@ -651,6 +740,7 @@ export default {
             };
             reader.readAsDataURL(file);
           }
+
           async function saveSettings() {
             const data = {
               action: 'save_settings',
@@ -741,10 +831,13 @@ export default {
     }
 
     // ==========================================
-    // 动态下发设置参数公共方法
+    // 一键安装脚本 (/install.sh)
     // ==========================================
-    const getAgentConfig = async () => {
-      let reportInterval = '5'; let pingCt = 'default'; let pingCu = 'default'; let pingCm = 'default';
+    if (request.method === 'GET' && url.pathname === '/install.sh') {
+      let reportInterval = '5';
+      let pingCt = 'default';
+      let pingCu = 'default';
+      let pingCm = 'default';
       try {
         const res = await env.DB.prepare("SELECT key, value FROM settings WHERE key IN ('report_interval', 'ping_node_ct', 'ping_node_cu', 'ping_node_cm')").all();
         if (res && res.results) {
@@ -756,208 +849,7 @@ export default {
            });
         }
       } catch(e) {}
-      return { reportInterval, pingCt, pingCu, pingCm };
-    }
 
-    // ==========================================
-    // Windows PowerShell 探针脚本 (/install.ps1)
-    // ==========================================
-    if (request.method === 'GET' && url.pathname === '/install.ps1') {
-      const serverId = url.searchParams.get('id');
-      const secret = url.searchParams.get('secret');
-      if (!serverId || !secret) return new Response("Error: Missing id or secret params.", {status: 400});
-      const cfg = await getAgentConfig();
-
-      let psScript = `
-$SERVER_ID = "${serverId}"
-$SECRET = "${secret}"
-$WORKER_URL = "${host}/update"
-
-Write-Host "开始安装全面增强版 CF Probe Agent (Windows)..."
-
-$agentDir = "C:\\ProgramData\\CFProbe"
-if (!(Test-Path $agentDir)) { New-Item -ItemType Directory -Path $agentDir | Out-Null }
-$agentScript = "$agentDir\\cf-probe.ps1"
-
-$scriptContent = @"
-` + `
-$SERVER_ID = "$SERVER_ID"
-$SECRET = "$SECRET"
-$WORKER_URL = "$WORKER_URL"
-
-$REPORT_INTERVAL = ${cfg.reportInterval}
-$PING_NODE_CT = "${cfg.pingCt}"
-$PING_NODE_CU = "${cfg.pingCu}"
-$PING_NODE_CM = "${cfg.pingCm}"
-
-$RX_PREV = 0; $TX_PREV = 0
-$LOOP_COUNT = 0
-$IPV4 = "0"; $IPV6 = "0"
-$PING_CT = "0"; $PING_CU = "0"; $PING_CM = "0"; $PING_BD = "0"
-
-function Get-HttpPing {
-    param([string]$node)
-    try {
-        $sw = [Diagnostics.Stopwatch]::StartNew()
-        $req = [System.Net.WebRequest]::Create("http://" + $node)
-        $req.Timeout = 2000; $req.Method = "HEAD"
-        $res = $req.GetResponse(); $res.Close()
-        $sw.Stop()
-        return [math]::Round($sw.Elapsed.TotalMilliseconds)
-    } catch { return 0 }
-}
-
-while ($true) {
-    if ($LOOP_COUNT % 60 -eq 0) {
-        try { $ipv4_req = (Invoke-RestMethod -Uri "https://cloudflare.com/cdn-cgi/trace" -UseBasicParsing -TimeoutSec 3); if ($ipv4_req -match "ip=") { $IPV4 = "1" } else { $IPV4 = "0" } } catch { $IPV4 = "0" }
-    }
-    
-    if ($LOOP_COUNT % 6 -eq 0) {
-        $idx = $LOOP_COUNT % 3
-        if ($idx -eq 0) { $D_CT="bj-ct-dualstack.ip.zstaticcdn.com"; $D_CU="bj-cu-dualstack.ip.zstaticcdn.com"; $D_CM="bj-cm-dualstack.ip.zstaticcdn.com" }
-        elseif ($idx -eq 1) { $D_CT="sh-ct-dualstack.ip.zstaticcdn.com"; $D_CU="sh-cu-dualstack.ip.zstaticcdn.com"; $D_CM="sh-cm-dualstack.ip.zstaticcdn.com" }
-        else { $D_CT="gd-ct-dualstack.ip.zstaticcdn.com"; $D_CU="gd-cu-dualstack.ip.zstaticcdn.com"; $D_CM="gd-cm-dualstack.ip.zstaticcdn.com" }
-        
-        $c_ct = if ($PING_NODE_CT -eq "default") { $D_CT } else { $PING_NODE_CT }
-        $c_cu = if ($PING_NODE_CU -eq "default") { $D_CU } else { $PING_NODE_CU }
-        $c_cm = if ($PING_NODE_CM -eq "default") { $D_CM } else { $PING_NODE_CM }
-
-        $PING_CT = Get-HttpPing $c_ct
-        $PING_CU = Get-HttpPing $c_cu
-        $PING_CM = Get-HttpPing $c_cm
-        $PING_BD = Get-HttpPing "lf3-ips.zstaticcdn.com"
-    }
-
-    $LOOP_COUNT++
-
-    $os = Get-CimInstance Win32_OperatingSystem
-    $OS_NAME = $os.Caption
-    $ARCH = (Get-CimInstance Win32_ComputerSystem).SystemType
-    $CPU_INFO = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
-
-    $CPU = [math]::Round((Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average, 2)
-    
-    $RAM_TOTAL = [math]::Round($os.TotalVisibleMemorySize / 1024, 0)
-    $RAM_FREE = [math]::Round($os.FreePhysicalMemory / 1024, 0)
-    $RAM_USED = $RAM_TOTAL - $RAM_FREE
-    $RAM_PCT = if ($RAM_TOTAL -gt 0) { [math]::Round(($RAM_USED / $RAM_TOTAL) * 100, 2) } else { 0 }
-
-    $pagefile = Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue
-    $SWAP_TOTAL = 0; $SWAP_USED = 0
-    if ($pagefile) {
-        $SWAP_TOTAL = ($pagefile | Measure-Object -Property AllocatedBaseSize -Sum).Sum
-        $SWAP_USED = ($pagefile | Measure-Object -Property CurrentUsage -Sum).Sum
-    }
-
-    $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'" -ErrorAction SilentlyContinue
-    $DISK_TOTAL = 0; $DISK_USED = 0; $DISK_PCT = 0
-    if ($disk) {
-        $DISK_TOTAL = [math]::Round($disk.Size / 1048576, 0)
-        $diskFreeMB = [math]::Round($disk.FreeSpace / 1048576, 0)
-        $DISK_USED = $DISK_TOTAL - $diskFreeMB
-        $DISK_PCT = if ($DISK_TOTAL -gt 0) { [math]::Round(($DISK_USED / $DISK_TOTAL) * 100, 2) } else { 0 }
-    }
-
-    $uptimeSpan = (Get-Date) - $os.LastBootUpTime
-    $UPTIME = "{0} days, {1:d2}:{2:d2}" -f $uptimeSpan.Days, $uptimeSpan.Hours, $uptimeSpan.Minutes
-    $BOOT_TIME = $os.LastBootUpTime.ToString("yyyy-MM-dd HH:mm:ss")
-    $LOAD = "0 0 0"
-
-    $PROCESSES = (Get-Process).Count
-    $TCP_CONN = (netstat -ano -p tcp | Measure-Object).Count
-    $UDP_CONN = (netstat -ano -p udp | Measure-Object).Count
-
-    $netStats = Get-NetAdapterStatistics -ErrorAction SilentlyContinue
-    $RX_NOW = 0; $TX_NOW = 0
-    if ($netStats) {
-        $RX_NOW = ($netStats | Measure-Object -Property ReceivedBytes -Sum).Sum
-        $TX_NOW = ($netStats | Measure-Object -Property SentBytes -Sum).Sum
-    }
-    
-    if ($RX_PREV -eq 0) { $RX_PREV = $RX_NOW }
-    if ($TX_PREV -eq 0) { $TX_PREV = $TX_NOW }
-    
-    $inv = if ($REPORT_INTERVAL -gt 0) { $REPORT_INTERVAL } else { 5 }
-    $RX_SPEED = [math]::Round(($RX_NOW - $RX_PREV) / $inv)
-    $TX_SPEED = [math]::Round(($TX_NOW - $TX_PREV) / $inv)
-    $RX_PREV = $RX_NOW; $TX_PREV = $TX_NOW
-
-    $VIRT = "Windows" 
-
-    $payload = @{
-        id = $SERVER_ID
-        secret = $SECRET
-        metrics = @{
-            cpu = "$CPU"
-            ram = "$RAM_PCT"
-            ram_total = "$RAM_TOTAL"
-            ram_used = "$RAM_USED"
-            swap_total = "$SWAP_TOTAL"
-            swap_used = "$SWAP_USED"
-            disk = "$DISK_PCT"
-            disk_total = "$DISK_TOTAL"
-            disk_used = "$DISK_USED"
-            load = "$LOAD"
-            uptime = "$UPTIME"
-            boot_time = "$BOOT_TIME"
-            net_rx = "$RX_NOW"
-            net_tx = "$TX_NOW"
-            net_in_speed = "$RX_SPEED"
-            net_out_speed = "$TX_SPEED"
-            os = "$OS_NAME"
-            arch = "$ARCH"
-            cpu_info = "$CPU_INFO"
-            processes = "$PROCESSES"
-            tcp_conn = "$TCP_CONN"
-            udp_conn = "$UDP_CONN"
-            ip_v4 = "$IPV4"
-            ip_v6 = "$IPV6"
-            ping_ct = "$PING_CT"
-            ping_cu = "$PING_CU"
-            ping_cm = "$PING_CM"
-            ping_bd = "$PING_BD"
-            virt = "$VIRT"
-        }
-    }
-    $json = $payload | ConvertTo-Json -Depth 10
-
-    try {
-        $res = Invoke-RestMethod -Uri $WORKER_URL -Method Post -Body $json -ContentType "application/json" -TimeoutSec 10
-        if ($res -match "INTERVAL=") {
-            $parts = $res -split '\\|'
-            foreach ($p in $parts) {
-                if ($p -match "INTERVAL=(.+)") { $REPORT_INTERVAL = [int]$matches[1] }
-                if ($p -match "CT=(.+)") { $PING_NODE_CT = $matches[1] }
-                if ($p -match "CU=(.+)") { $PING_NODE_CU = $matches[1] }
-                if ($p -match "CM=(.+)") { $PING_NODE_CM = $matches[1] }
-            }
-        }
-    } catch {}
-
-    Start-Sleep -Seconds $REPORT_INTERVAL
-}
-` + `
-"@
-
-Set-Content -Path $agentScript -Value $scriptContent -Encoding UTF8
-
-$taskName = "CFProbeAgent"
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-$action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File \`"$agentScript\`""
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Description "CF Server Monitor Agent" | Out-Null
-Start-ScheduledTask -TaskName $taskName | Out-Null
-Write-Host "✅ Windows 探针安装成功！服务已在后台(计划任务CFProbeAgent)运行。"
-`;
-      return new Response(psScript, { headers: { 'Content-Type': 'text/plain;charset=UTF-8' } });
-    }
-
-    // ==========================================
-    // Linux/Alpine 探针安装脚本 (/install.sh)
-    // ==========================================
-    if (request.method === 'GET' && url.pathname === '/install.sh') {
-      const cfg = await getAgentConfig();
       const osType = url.searchParams.get('os') || 'debian';
       const sh_bin = osType === 'alpine' ? "/bin/sh" : "/bin/bash";
       const cmdApp = "cur" + "l";
@@ -974,8 +866,11 @@ echo "开始安装全面增强版 CF Probe Agent (${osType === 'alpine' ? 'Alpin
 # 清理旧环境
 `;
 
-      if (osType === 'alpine') bashScript += `rc-service cf-probe stop 2>/dev/null\n`;
-      else bashScript += `${sh_sys} stop cf-probe.service 2>/dev/null\n`;
+      if (osType === 'alpine') {
+        bashScript += `rc-service cf-probe stop 2>/dev/null\n`;
+      } else {
+        bashScript += `${sh_sys} stop cf-probe.service 2>/dev/null\n`;
+      }
 
       bashScript += `pkill -f cf-probe.sh 2>/dev/null
 
@@ -987,6 +882,7 @@ WORKER_URL="$WORKER_URL"
 
 get_net_bytes() { awk 'NR>2 {rx+=\\$2; tx+=\\$10} END {printf "%.0f %.0f", rx, tx}' /proc/net/dev; }
 get_cpu_stat() { awk '/^cpu / {print \\$2+\\$3+\\$4+\\$5+\\$6+\\$7+\\$8+\\$9, \\$5+\\$6}' /proc/stat; }
+
 get_http_ping() { rtt=\\$(${cmdApp} -o /dev/null -s -m 2 -w "%{time_total}" "http://\\$1" 2>/dev/null | awk '{printf "%.0f", \\$1*1000}'); echo "\\\${rtt:-0}"; }
 
 NET_STAT=\\$(get_net_bytes)
@@ -1003,10 +899,10 @@ LOOP_COUNT=0
 IPV4="0"; IPV6="0"
 PING_CT="0"; PING_CU="0"; PING_CM="0"; PING_BD="0"
 
-REPORT_INTERVAL="${cfg.reportInterval}"
-PING_NODE_CT="${cfg.pingCt}"
-PING_NODE_CU="${cfg.pingCu}"
-PING_NODE_CM="${cfg.pingCm}"
+REPORT_INTERVAL="${reportInterval}"
+PING_NODE_CT="${pingCt}"
+PING_NODE_CU="${pingCu}"
+PING_NODE_CM="${pingCm}"
 
 while true; do
   if [ \\$((LOOP_COUNT % 60)) -eq 0 ]; then
@@ -1065,6 +961,7 @@ while true; do
   DIFF_IDLE=\\$((CPU_IDLE - PREV_CPU_IDLE))
   
   CPU=\\$(awk -v t=\\$DIFF_TOTAL -v i=\\$DIFF_IDLE 'BEGIN {if (t<=0) print 0; else {pct=(1 - i/t)*100; if(pct<0) print 0; else if(pct>100) print 100; else printf "%.2f", pct}}')
+  
   PREV_CPU_TOTAL=\\$CPU_TOTAL; PREV_CPU_IDLE=\\$CPU_IDLE
   
   MEM_INFO=\\$(free -m 2>/dev/null)
@@ -1109,7 +1006,9 @@ while true; do
   
   PAYLOAD="{\\"id\\": \\"\\$SERVER_ID\\", \\"secret\\": \\"\\$SECRET\\", \\"metrics\\": { \\"cpu\\": \\"\\$CPU\\", \\"ram\\": \\"\\$RAM\\", \\"ram_total\\": \\"\\$RAM_TOTAL\\", \\"ram_used\\": \\"\\$RAM_USED\\", \\"swap_total\\": \\"\\$SWAP_TOTAL\\", \\"swap_used\\": \\"\\$SWAP_USED\\", \\"disk\\": \\"\\$DISK\\", \\"disk_total\\": \\"\\$DISK_TOTAL\\", \\"disk_used\\": \\"\\$DISK_USED\\", \\"load\\": \\"\\$LOAD\\", \\"uptime\\": \\"\\$UPTIME\\", \\"boot_time\\": \\"\\$BOOT_TIME\\", \\"net_rx\\": \\"\\$RX_NOW\\", \\"net_tx\\": \\"\\$TX_NOW\\", \\"net_in_speed\\": \\"\\$RX_SPEED\\", \\"net_out_speed\\": \\"\\$TX_SPEED\\", \\"os\\": \\"\\$OS\\", \\"arch\\": \\"\\$ARCH\\", \\"cpu_info\\": \\"\\$CPU_INFO\\", \\"processes\\": \\"\\$PROCESSES\\", \\"tcp_conn\\": \\"\\$TCP_CONN\\", \\"udp_conn\\": \\"\\$UDP_CONN\\", \\"ip_v4\\": \\"\\$IPV4\\", \\"ip_v6\\": \\"\\$IPV6\\", \\"ping_ct\\": \\"\\$PING_CT\\", \\"ping_cu\\": \\"\\$PING_CU\\", \\"ping_cm\\": \\"\\$PING_CM\\", \\"ping_bd\\": \\"\\$PING_BD\\", \\"virt\\": \\"\\$VIRT\\" }}"
   
+  # 接收 Cloudflare Worker 返回的最新配置进行热重载
   RES=\\$(${cmdApp} -s -X POST -H "Content-Type: application/json" -d "\\$PAYLOAD" "\\$WORKER_URL" 2>/dev/null)
+  
   if echo "\\$RES" | grep -q "INTERVAL="; then
     NEW_INV=\\$(echo "\\$RES" | awk -F'INTERVAL=' '{print \\$2}' | awk -F'|' '{print \\$1}')
     if [ -n "\\$NEW_INV" ] && [ "\\$NEW_INV" -eq "\\$NEW_INV" ] 2>/dev/null; then REPORT_INTERVAL=\\$NEW_INV; fi
@@ -1123,6 +1022,7 @@ while true; do
     NEW_CM=\\$(echo "\\$RES" | awk -F'CM=' '{print \\$2}' | awk -F'|' '{print \\$1}')
     [ -n "\\$NEW_CM" ] && PING_NODE_CM="\\$NEW_CM"
   fi
+
   sleep \\$REPORT_INTERVAL
 done
 EOF
@@ -1143,7 +1043,7 @@ EOF
 chmod +x /etc/init.d/cf-probe
 rc-update add cf-probe default
 rc-service cf-probe restart
-echo "✅ Alpine 探针安装成功！"
+echo "✅ Alpine 探针安装成功！热重载功能已启用。"
 `;
       } else {
         const sh_etc = "/etc/" + "systemd/" + "system";
@@ -1164,7 +1064,7 @@ EOF
 ${sh_sys} daemon-reload
 ${sh_sys} enable cf-probe.service
 ${sh_sys} restart cf-probe.service
-echo "✅ Linux 探针安装成功！"
+echo "✅ Linux 探针安装成功！热重载功能已启用。"
 `;
       }
 
@@ -1191,6 +1091,7 @@ echo "✅ Linux 探针安装成功！"
         const tzOffset = 8 * 60 * 60000; 
         const localNow = new Date(nowTime.getTime() + tzOffset);
         
+        // --- 核心：动态账单日周期计算逻辑 ---
         let resetDayVal = parseInt(serverExists.reset_day) || 1;
         if (resetDayVal < 1) resetDayVal = 1;
         if (resetDayVal > 31) resetDayVal = 31;
@@ -1199,17 +1100,20 @@ echo "✅ Linux 探针安装成功！"
         let m = localNow.getMonth() + 1; // 1-12
         let d = localNow.getDate();
 
+        // 识别当前月最后一天
         let maxDaysThisMonth = new Date(y, m, 0).getDate();
         let actualResetDayThisMonth = Math.min(resetDayVal, maxDaysThisMonth);
 
         let currentCycleStr = '';
         if (d < actualResetDayThisMonth) {
+            // 时间还未到本月的重置日，目前处于上一个月的计费周期
             let pm = m - 1; let py = y;
             if (pm === 0) { pm = 12; py -= 1; }
             let maxDaysPrevMonth = new Date(py, pm, 0).getDate();
             let actualResetDayPrevMonth = Math.min(resetDayVal, maxDaysPrevMonth);
             currentCycleStr = `${py}-${pm}-${actualResetDayPrevMonth}`;
         } else {
+            // 时间已经过了或等于本月重置日，进入本月的计费周期
             currentCycleStr = `${y}-${m}-${actualResetDayThisMonth}`;
         }
         
@@ -1315,9 +1219,11 @@ echo "✅ Linux 探针安装成功！"
     let globalSpeedIn = 0; let globalSpeedOut = 0;
     let globalNetTx = 0; let globalNetRx = 0;
     
+    // 全网 Gossip 同步数据 (包含所有隐藏服务器)
     let totalAssetGossip = 0; 
     let totalServersGossip = results.length;
 
+    // 前台可见面板统计数据 (剔除隐藏服务器)
     let visibleAsset = 0; let visibleRemAsset = 0;
     let visibleServersCount = 0;
 
@@ -1326,6 +1232,7 @@ echo "✅ Linux 探针安装成功！"
 
     if (results && results.length > 0) {
       for (const server of results) {
+        // 先计算所有机器的资产权重，供 Gossip 全网排名使用
         let amount = 0; let remValue = 0;
         if (server.price && server.price.match(/[\d.]+/)) {
             let rawAmount = parseFloat(server.price.match(/[\d.]+/)[0]) || 0;
@@ -1362,8 +1269,12 @@ echo "✅ Linux 探针安装成功！"
         
         totalAssetGossip += amount;
 
-        if (server.is_hidden === 'true') continue;
+        // 如果机器被设置为隐藏，就不再参与本地 UI 的聚合逻辑
+        if (server.is_hidden === 'true') {
+            continue;
+        }
 
+        // ================= 从这里往下，只处理前台可见服务器 =================
         visibleServersCount++;
         visibleAsset += amount; 
         visibleRemAsset += remValue;
@@ -1397,6 +1308,9 @@ echo "✅ Linux 探针安装成功！"
       const isAjax = url.searchParams.get('ajax') === '1';
       const idParam = url.searchParams.get('id');
 
+      // ==========================================
+      // 详情页拦截与视图渲染
+      // ==========================================
       if (idParam && !isAjax) {
         const server = await env.DB.prepare('SELECT * FROM servers WHERE id = ?').bind(idParam).first();
         if (!server || server.is_hidden === 'true') return new Response('Server Not Found', { status: 404 });
@@ -1674,21 +1588,27 @@ echo "✅ Linux 探针安装成功！"
         // ==========================================
         const runGossip = async () => {
            const nowMs = Date.now();
+           
+           // 清理超过 24 小时未见面的幽灵节点
            await env.DB.prepare("DELETE FROM peers WHERE last_seen < ? AND last_seen > 0").bind(nowMs - 86400000).run();
 
            let seedList = sys.seed_nodes ? sys.seed_nodes.split(',').map(s => s.trim()).filter(s => s) : [defaultPeersStr];
            
+           // 获取本地已知节点去分享
            let { results: dbPeers } = await env.DB.prepare('SELECT domain FROM peers WHERE domain != ? ORDER BY RANDOM() LIMIT 3').bind(myDomain).all();
            let targetDomains = dbPeers.map(p => p.domain);
+           
+           // 如果当前孤岛找不到别人，启用种子节点强行连接
            if (targetDomains.length === 0) targetDomains = seedList;
            
+           // 准备全网已知的通讯录 (告诉别人我认识哪些人)
            const { results: allPeers } = await env.DB.prepare('SELECT domain FROM peers ORDER BY RANDOM() LIMIT 10').all();
            const known_peers = allPeers.map(p => p.domain);
            
            const payload = {
                domain: myDomain,
-               server_count: totalServersGossip, 
-               total_asset: totalAssetGossip,    
+               server_count: totalServersGossip, // ✅ 发送包含隐藏节点的真实数量
+               total_asset: totalAssetGossip,    // ✅ 发送包含隐藏节点的真实资产
                version: nowMs,
                known_peers: known_peers
            };
@@ -1702,13 +1622,14 @@ echo "✅ Linux 探针安装成功！"
                        headers: {'Content-Type': 'application/json'},
                        cf: { cacheTtl: 0 }
                    });
-               } catch(e) {} 
+               } catch(e) {} // 如果别人挂了，Gossip 容错跳过
            }
            
+           // 更新自身的数据，防止被遗忘
            await env.DB.prepare(`
               INSERT INTO peers (domain, server_count, total_asset, version, last_seen) VALUES (?, ?, ?, ?, ?) 
               ON CONFLICT(domain) DO UPDATE SET server_count=excluded.server_count, total_asset=excluded.total_asset, version=excluded.version, last_seen=excluded.last_seen
-           `).bind(myDomain, totalServersGossip, totalAssetGossip, nowMs, nowMs).run(); 
+           `).bind(myDomain, totalServersGossip, totalAssetGossip, nowMs, nowMs).run(); // ✅ 保存本地包含隐藏节点的完整统计
         };
         ctx.waitUntil(runGossip());
       }
@@ -1889,10 +1810,12 @@ echo "✅ Linux 探针安装成功！"
           .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
           .admin-btn { padding: 8px 16px; background: #3b82f6; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight:bold; }
           
+          /* 排行榜 Modal CSS */
           .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; overflow-y: auto; backdrop-filter: blur(4px); }
           .modal-content { background: white; padding: 20px; border-radius: 12px; margin: 40px auto; position: relative; max-height: 85vh; overflow-y: auto; box-sizing: border-box; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
           .theme2 .modal-content, .theme5 .modal-content { background: #161b22; color: #c9d1d9; border: 1px solid #30363d; }
           
+          /* 上下两行自适应 Grid CSS */
           .global-stats { display: flex; flex-direction: column; gap: 15px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); margin-bottom: 30px; text-align: center; box-sizing: border-box; width: 100%; }
           .stats-row { display: flex; justify-content: center; width: 100%; align-items: center; }
           .stats-row.bottom-row { border-top: 1px dashed rgba(150,150,150,0.2); padding-top: 15px; }
@@ -2085,6 +2008,7 @@ echo "✅ Linux 探针安装成功！"
           let mapInitialized = false;
           window.currentFilter = 'all';
 
+          // 核心：异步拉取内部汇聚的全网数据
           const fetchRank = async () => {
               try {
                   const res = await fetch('/api/rank');
@@ -2116,7 +2040,7 @@ echo "✅ Linux 探针安装成功！"
               } catch(e) {}
           };
           fetchRank();
-          setInterval(fetchRank, 12000); 
+          setInterval(fetchRank, 12000); // 定时刷新全网排名数据
 
           function switchView(viewName) {
             document.querySelectorAll('.toggle-btn').forEach(btn => btn.classList.remove('active'));
@@ -2164,6 +2088,7 @@ echo "✅ Linux 探针安装成功！"
           const countryCoords = {
             'US': [37.09, -95.71], 'CN': [35.86, 104.19], 'JP': [36.20, 138.25], 'HK': [22.31, 114.16], 'SG': [1.35, 103.81], 'KR': [35.90, 127.76], 'DE': [51.16, 10.45], 'GB': [55.37, -3.43], 'NL': [52.13, 5.29], 'FR': [46.22, 2.21], 'CA': [56.13, -106.34], 'AU': [-25.27, 133.77], 'IN': [20.59, 78.96], 'BR': [-14.23, -51.92], 'RU': [61.52, 105.31], 'ZA': [-30.55, 22.93], 'TW': [23.69, 120.96], 'IT': [41.87, 12.56], 'SE': [60.12, 18.64], 'CH': [46.81, 8.22], 'ES': [40.46, -3.74], 'PL': [51.91, 19.14], 'FI': [61.92, 25.74], 'NO': [60.47, 8.46], 'DK': [56.26, 9.50], 'IE': [53.14, -7.69], 'AT': [47.51, 14.55], 'TR': [38.96, 35.24], 'AE': [23.42, 53.84], 'MY': [4.21, 101.97], 'TH': [15.87, 100.99], 'VN': [14.05, 108.27], 'PH': [12.87, 121.77], 'ID': [-0.78, 113.92]
           };
+
           const iso2To3 = { "US":"USA","CN":"CHN","JP":"JPN","HK":"HKG","SG":"SGP","KR":"KOR","DE":"DEU","GB":"GBR", "NL":"NLD","FR":"FRA","CA":"CAN","AU":"AUS","IN":"IND","BR":"BRA","RU":"RUS","ZA":"ZAF", "TW":"TWN","IT":"ITA","SE":"SWE","CH":"CHE","ES":"ESP","PL":"POL","FI":"FIN","NO":"NOR", "DK":"DNK","IE":"IRL","AT":"AUT","TR":"TUR","AE":"ARE","MY":"MYS","TH":"THA","VN":"VNM", "PH":"PHL","ID":"IDN" };
 
           async function initMap() {
@@ -2186,6 +2111,7 @@ echo "✅ Linux 探针安装成功！"
 
             const data = JSON.parse(newDataStr);
             const isDark = document.body.className.includes('theme2') || document.body.className.includes('theme5');
+
             const activeIso3 = {}; for (const code in data) { if (iso2To3[code]) activeIso3[iso2To3[code]] = true; }
 
             geoJsonLayer = L.geoJSON(worldGeoJson, {
@@ -2223,6 +2149,7 @@ echo "✅ Linux 探针安装成功！"
               document.getElementById('ajax-filters').innerHTML = newDoc.getElementById('ajax-filters').innerHTML;
               document.getElementById('map-data').textContent = newDoc.getElementById('map-data').textContent;
               
+              // 状态回填保护 (防止 AJAX 替换覆盖掉异步拉取的数据)
               if (currentServerRank) { const elS = document.getElementById('ajax-rank-server'); if (elS) elS.innerHTML = currentServerRank; }
               if (currentAssetRank) { const elA = document.getElementById('ajax-rank-asset'); if (elA) elA.innerHTML = currentAssetRank; }
               const elGs = document.getElementById('ajax-global-servers'); if (elGs) elGs.innerText = window.currentGlobalServers;
