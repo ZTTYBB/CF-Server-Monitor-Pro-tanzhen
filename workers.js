@@ -89,7 +89,8 @@ export default {
       custom_bg: '', custom_css: '', custom_head: '', custom_script: '', 
       is_public: 'true', show_price: 'true', show_expire: 'true', show_bw: 'true', show_tf: 'true', show_admin_btn: 'true',
       admin_path: '/admin', asset_currency: '元', seed_nodes: '', tg_notify: 'false', tg_bot_token: '', tg_chat_id: '',
-      auto_reset_traffic: 'false', report_interval: '5', ping_node_ct: 'default', ping_node_cu: 'default', ping_node_cm: 'default'
+      auto_reset_traffic: 'false', report_interval: '5', ping_node_ct: 'default', ping_node_cu: 'default', ping_node_cm: 'default',
+      offline_threshold: '30', alert_threshold: '120'
     };
 
     try {
@@ -160,13 +161,14 @@ export default {
 
         let stateChanged = false;
         const now = Date.now();
+        const alertThresMs = parseInt(sys.alert_threshold || '120') * 1000;
 
         for (const s of allServers) {
           const diff = now - s.last_updated;
-          const isOffline = diff > 120000; 
+          const isOffline = diff > alertThresMs; 
 
           if (isOffline && !alertState[s.id]) {
-            await sendTelegram(`⚠️ <b>节点离线告警</b>\n\n<b>节点名称:</b> ${s.name}\n<b>状态:</b> 离线 (超过2分钟未上报)\n<b>时间:</b> ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}`);
+            await sendTelegram(`⚠️ <b>节点离线告警</b>\n\n<b>节点名称:</b> ${s.name}\n<b>状态:</b> 离线 (超过判定阈值未上报)\n<b>时间:</b> ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}`);
             alertState[s.id] = true; stateChanged = true;
           } else if (!isOffline && alertState[s.id]) {
             await sendTelegram(`✅ <b>节点恢复通知</b>\n\n<b>节点名称:</b> ${s.name}\n<b>状态:</b> 恢复在线\n<b>时间:</b> ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}`);
@@ -339,7 +341,7 @@ export default {
 
         if (chatId !== sys.tg_chat_id) return new Response('OK', { status: 200 });
 
-        const mainMenuText = `🖥 <b>Server Monitor Pro 管理控制台</b>\n\n欢迎使用 Telegram 快捷管理模式！请点击下方按钮进行操作，或者输入命令。\n\n<b>常用命令示例：</b>\n<code>/add 香港VPS debian</code> - 添加名为"香港VPS"的debian节点 (系统可选: debian/alpine/windows)\n<code>/set_interval 10</code> - 设置节点上报间隔为 10 秒\n<code>/set_sitetitle 我的专属探针</code> - 修改前台网站大标题\n<code>/set_admintitle 控制台</code> - 修改后台管理标签页名称\n<code>/menu</code> - 调出本管理菜单`;
+        const mainMenuText = `🖥 <b>Server Monitor Pro 管理控制台</b>\n\n欢迎使用 Telegram 快捷管理模式！请点击下方按钮进行操作，或者输入命令。\n\n<b>常用命令示例：</b>\n<code>/add 香港VPS debian</code> - 添加名为"香港VPS"的debian节点\n<code>/set_interval 10</code> - 设置节点上报间隔为 10 秒\n<code>/set_offline 30</code> - 设置前台显示离线的判定时间(秒)\n<code>/set_alert 120</code> - 设置TG掉线告警的判定时间(秒)\n<code>/set_sitetitle 我的专属探针</code> - 修改前台网站大标题\n<code>/set_admintitle 控制台</code> - 修改后台管理标签页名称\n<code>/menu</code> - 调出本管理菜单`;
         
         const mainMenuKb = {
             inline_keyboard: [
@@ -382,8 +384,9 @@ export default {
                     await tgEdit(chatId, msgId, '暂无节点。请发送 <code>/add 节点名 debian</code> 来添加。', {inline_keyboard: [[{text: '🔙 返回主菜单', callback_data: 'cb_menu'}]]});
                 } else {
                     const now = Date.now();
+                    const offlineThresMs = parseInt(sys.offline_threshold || '30') * 1000;
                     for (const s of results) {
-                        const isOnline = (now - s.last_updated) < 30000;
+                        const isOnline = (now - s.last_updated) < offlineThresMs;
                         const statusIcon = isOnline ? '🟢' : '🔴';
                         kb.inline_keyboard.push([{text: `${statusIcon} ${s.name}`, callback_data: `cb_node_${s.id}`}]);
                     }
@@ -500,6 +503,24 @@ export default {
                     await tgSend(chatId, `✅ 上报间隔已修改为 ${v} 秒。(将在 Agent 下次请求时生效)`);
                 }
             }
+            else if (cmd === '/set_offline') {
+                const v = parseInt(cmdParts[1]);
+                if (v && v >= 1) {
+                    await updateSetting('offline_threshold', v.toString());
+                    await tgSend(chatId, `✅ 前台离线判定时间已修改为 ${v} 秒。`);
+                } else {
+                    await tgSend(chatId, `❌ 格式错误，例: <code>/set_offline 30</code>`);
+                }
+            }
+            else if (cmd === '/set_alert') {
+                const v = parseInt(cmdParts[1]);
+                if (v && v >= 1) {
+                    await updateSetting('alert_threshold', v.toString());
+                    await tgSend(chatId, `✅ TG掉线告警判定时间已修改为 ${v} 秒。`);
+                } else {
+                    await tgSend(chatId, `❌ 格式错误，例: <code>/set_alert 120</code>`);
+                }
+            }
             else if (cmd === '/set_sitetitle') {
                 const v = text.replace(cmdParts[0], '').trim();
                 if (v) {
@@ -548,6 +569,8 @@ export default {
                          { command: "edit", description: "编辑节点 (例: /edit ID 名称 分组)" },
                          { command: "del", description: "删除节点 (例: /del ID)" },
                          { command: "set_interval", description: "上报间隔 (例: /set_interval 10)" },
+                         { command: "set_offline", description: "前台离线判定时间(秒)" },
+                         { command: "set_alert", description: "TG告警判定时间(秒)" },
                          { command: "set_sitetitle", description: "前台标题 (例: /set_sitetitle 探针)" },
                          { command: "set_admintitle", description: "后台标题 (例: /set_admintitle 管理)" }
                       ]
@@ -599,11 +622,12 @@ export default {
       if (!checkAuth(request)) return authResponse(sys.admin_title);
       const { results } = await env.DB.prepare('SELECT id, name, last_updated, server_group, price, expire_date, bandwidth, traffic_limit, agent_os, is_hidden, reset_day FROM servers').all();
       const now = Date.now();
+      const offlineThresMs = parseInt(sys.offline_threshold || '30') * 1000;
       
       let trs = '';
       if (results && results.length > 0) {
         for (const s of results) {
-          const isOnline = (now - s.last_updated) < 30000;
+          const isOnline = (now - s.last_updated) < offlineThresMs;
           const status = isOnline ? '<span style="color:green; font-weight:bold;">在线</span>' : '<span style="color:red; font-weight:bold;">离线</span>';
           const hiddenBadge = s.is_hidden === 'true' ? '<span style="background:#64748b; color:white; padding:2px 6px; border-radius:4px; font-size:12px; margin-left:5px;">已隐藏</span>' : '';
           
@@ -723,6 +747,14 @@ export default {
               <div class="form-group">
                 <label>⏱️ Agent 上报间隔 (秒)</label>
                 <input type="number" id="cfg_report_interval" value="${sys.report_interval || '5'}" min="1" max="120" placeholder="默认 5 秒">
+              </div>
+              <div class="form-group">
+                <label>⏱️ 前台判定离线时间 (秒)</label>
+                <input type="number" id="cfg_offline_threshold" value="${sys.offline_threshold || '30'}" min="5" placeholder="默认 30 秒 (即多少秒未上报判定为离线)">
+              </div>
+              <div class="form-group">
+                <label>⏱️ TG掉线告警阈值 (秒)</label>
+                <input type="number" id="cfg_alert_threshold" value="${sys.alert_threshold || '120'}" min="10" placeholder="默认 120 秒 (即超过多少秒不报才推TG)">
               </div>
             </div>
             <div>
@@ -896,6 +928,8 @@ export default {
                 tg_bot_token: document.getElementById('cfg_tg_bot_token').value,
                 tg_chat_id: document.getElementById('cfg_tg_chat_id').value,
                 report_interval: document.getElementById('cfg_report_interval').value || '5',
+                offline_threshold: document.getElementById('cfg_offline_threshold').value || '30',
+                alert_threshold: document.getElementById('cfg_alert_threshold').value || '120',
                 ping_node_ct: document.getElementById('cfg_ping_node_ct').value,
                 ping_node_cu: document.getElementById('cfg_ping_node_cu').value,
                 ping_node_cm: document.getElementById('cfg_ping_node_cm').value
@@ -1595,6 +1629,8 @@ rm -f /tmp/cf_install.sh
     let { results } = await env.DB.prepare('SELECT * FROM servers').all();
 
     const now = Date.now();
+    const offlineThresMs = parseInt(sys.offline_threshold || '30') * 1000;
+    
     let globalOnline = 0; let globalOffline = 0;
     let globalSpeedIn = 0; let globalSpeedOut = 0;
     let globalNetTx = 0; let globalNetRx = 0;
@@ -1654,7 +1690,7 @@ rm -f /tmp/cf_install.sh
         server._remValue = remValue; 
         server._amount = amount;
 
-        const isOnline = (now - server.last_updated) < 30000;
+        const isOnline = (now - server.last_updated) < offlineThresMs;
         if (isOnline) {
           globalOnline++;
           globalSpeedIn += parseFloat(server.net_in_speed) || 0;
@@ -1687,7 +1723,7 @@ rm -f /tmp/cf_install.sh
         
         const cCode = (server.country || 'xx').toLowerCase();
         const flagHtml = cCode !== 'xx' ? `<img src="https://flagcdn.com/24x18/${cCode}.png" alt="${cCode}" style="vertical-align: middle; margin-right: 8px; border-radius: 3px;">` : '🏳️';
-        const isOnline = (Date.now() - server.last_updated) < 30000;
+        const isOnline = (Date.now() - server.last_updated) < offlineThresMs;
         const statusHtml = isOnline ? '<span style="background:#10b981; color:white; padding:2px 8px; border-radius:12px; font-size:12px; font-weight:bold;">在线</span>' : '<span style="background:#ef4444; color:white; padding:2px 8px; border-radius:12px; font-size:12px; font-weight:bold;">离线</span>';
 
         const detailHtml = `<!DOCTYPE html>
@@ -2014,7 +2050,7 @@ rm -f /tmp/cf_install.sh
         for (const [grpName, grpServers] of Object.entries(groups)) {
           cardContentHtml += `<div class="group-header">${grpName}</div><div class="grid-container">`;
           for (const server of grpServers) {
-            const isOnline = (now - server.last_updated) < 30000;
+            const isOnline = (now - server.last_updated) < offlineThresMs;
             const statusColor = isOnline ? '#10b981' : '#ef4444'; 
             
             const cpu = parseFloat(server.cpu || '0').toFixed(1); 
