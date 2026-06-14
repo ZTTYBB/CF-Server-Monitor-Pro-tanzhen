@@ -1,0 +1,58 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    # 每天 UTC 0 点 / 北京时间早 8 点自动同步
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    # 也可以在 Actions 页面手动触发
+    inputs:
+      branch:
+        description: '要同步的分支'
+        required: true
+        default: 'main'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || 'main' }}
+          fetch-depth: 0
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/a63414262/CF-Server-Monitor-Pro.git
+          git remote -v
+
+      - name: Fetch upstream
+        run: |
+          git fetch upstream
+          echo "上游最新提交:"
+          git log upstream/main --oneline -3
+
+      - name: Check for upstream changes
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/main 2>/dev/null || echo 0)
+          echo "当前落后上游 $BEHIND 个提交"
+          echo "behind=$BEHIND" >> $GITHUB_OUTPUT
+
+      - name: Merge upstream
+        if: steps.check.outputs.behind != '0'
+        run: |
+          git checkout ${{ github.event.inputs.branch || 'main' }}
+          git merge upstream/main --no-edit
+          echo "合并完成"
+
+      - name: Push changes
+        if: steps.check.outputs.behind != '0'
+        run: |
+          git push origin ${{ github.event.inputs.branch || 'main' }}
+          echo "已推送到 origin/${{ github.event.inputs.branch || 'main' }}"
+
+      - name: No update needed
+        if: steps.check.outputs.behind == '0'
+        run: echo "仓库已是最新，无需同步"
